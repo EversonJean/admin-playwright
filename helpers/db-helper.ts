@@ -1,0 +1,67 @@
+import { execFileSync } from 'child_process';
+
+/**
+ * Helper de DB via `psql.exe` local. Usado para operações que não têm endpoint
+ * público — principalmente marcar email como confirmado pra bypass do fluxo
+ * de verificação por email durante testes.
+ *
+ * Não é elegante, mas é simples e funciona contra o Postgres local sem
+ * precisar mockar provider de email no back.
+ */
+
+const PSQL_PATH = process.env.PSQL_PATH ?? 'C:\\Program Files\\PostgreSQL\\18\\bin\\psql.exe';
+const PG_HOST = process.env.PG_HOST ?? 'localhost';
+const PG_PORT = process.env.PG_PORT ?? '5432';
+const PG_USER = process.env.PG_USER ?? 'postgres';
+const PG_PASSWORD = process.env.PG_PASSWORD ?? 'postgres';
+const PG_DATABASE = process.env.PG_DATABASE ?? 'adminbackend';
+
+export function execSql(sql: string): string {
+  return execFileSync(
+    PSQL_PATH,
+    ['-U', PG_USER, '-h', PG_HOST, '-p', PG_PORT, '-d', PG_DATABASE, '-t', '-A', '-c', sql],
+    {
+      env: { ...process.env, PGPASSWORD: PG_PASSWORD },
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  ).trim();
+}
+
+/**
+ * Marca o email como confirmado direto no banco — usado após signup nos testes
+ * E2E pra pular a etapa de verificação por email (que normalmente exigiria
+ * acessar inbox real).
+ */
+export function confirmEmailDirect(email: string): void {
+  execSql(
+    `UPDATE "Users" SET "EmailConfirmed" = TRUE WHERE LOWER("Email") = LOWER('${email.replace(/'/g, "''")}');`,
+  );
+}
+
+/**
+ * Conta tenants — útil pra smoke tests de "API está respondendo e DB tem dados".
+ */
+export function countTenants(): number {
+  const result = execSql('SELECT COUNT(*) FROM "Tenants";');
+  return parseInt(result, 10);
+}
+
+/**
+ * Apaga tudo do banco (cuidado!). Usado pelo script db:reset.
+ * Preserva schema (não dropa tabelas) — só limpa dados.
+ */
+export function truncateAllData(): void {
+  execSql(`
+    DO $$
+    DECLARE r RECORD;
+    BEGIN
+      FOR r IN (
+        SELECT tablename FROM pg_tables
+        WHERE schemaname = 'public' AND tablename != '__EFMigrationsHistory'
+      ) LOOP
+        EXECUTE 'TRUNCATE TABLE "' || r.tablename || '" RESTART IDENTITY CASCADE';
+      END LOOP;
+    END $$;
+  `);
+}

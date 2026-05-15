@@ -1,0 +1,75 @@
+import { defineConfig, devices } from '@playwright/test';
+import * as dotenv from 'dotenv';
+import * as path from 'path';
+
+dotenv.config({ path: path.resolve(__dirname, '.env') });
+
+const FRONT_URL = process.env.FRONT_URL ?? 'http://localhost:4200';
+const BACK_URL = process.env.BACK_URL ?? 'https://localhost:1501';
+const SKIP_WEBSERVER = process.env.SKIP_WEBSERVER === 'true';
+
+const BACK_CONNECTION_STRING =
+  process.env.BACK_CONNECTION_STRING ??
+  'Host=localhost;Port=5432;Database=adminbackend;Username=postgres;Password=postgres';
+
+const BACK_PROJECT_PATH = process.env.BACK_PROJECT_PATH ?? '../admin-backend/src/AdminBackend.Api';
+const FRONT_PROJECT_PATH = process.env.FRONT_PROJECT_PATH ?? '../admin-frontend';
+
+export default defineConfig({
+  testDir: './tests',
+  fullyParallel: true,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 2 : 0,
+  workers: process.env.CI ? 2 : 4,
+  reporter: [
+    ['html', { open: 'never' }],
+    ['list'],
+  ],
+  timeout: 60_000,
+  expect: { timeout: 10_000 },
+
+  use: {
+    baseURL: FRONT_URL,
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
+    ignoreHTTPSErrors: true,
+    actionTimeout: 15_000,
+    navigationTimeout: 30_000,
+    locale: 'pt-BR',
+    timezoneId: 'America/Sao_Paulo',
+  },
+
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+    },
+  ],
+
+  webServer: SKIP_WEBSERVER
+    ? undefined
+    : [
+        {
+          name: 'admin-backend',
+          command: `dotnet run --project "${BACK_PROJECT_PATH}" --launch-profile https`,
+          url: `${BACK_URL}/health`,
+          timeout: 180_000,
+          reuseExistingServer: !process.env.CI,
+          ignoreHTTPSErrors: true,
+          env: {
+            ASPNETCORE_ENVIRONMENT: 'Development',
+            ASPNETCORE_HTTPS_PORT: '1501',
+            ConnectionStrings__Default: BACK_CONNECTION_STRING,
+          },
+        },
+        {
+          name: 'admin-frontend',
+          command: 'npm start',
+          cwd: FRONT_PROJECT_PATH,
+          url: FRONT_URL,
+          timeout: 180_000,
+          reuseExistingServer: !process.env.CI,
+        },
+      ],
+});
