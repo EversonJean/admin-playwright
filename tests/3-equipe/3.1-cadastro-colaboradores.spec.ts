@@ -23,4 +23,22 @@ test.describe('Fluxo 3.1 — Cadastro de colaboradores', () => {
     const items = (list as { items?: unknown[] }).items ?? (list as unknown as { data?: { items?: unknown[] } }).data?.items ?? [];
     expect(items.length).toBeGreaterThan(0);
   });
+
+  test('@crud cria colaborador via UI e valida no back', async ({ authPage, authApi }) => {
+    const nome = `Colaborador E2E ${Date.now()}`;
+
+    await authPage.goto('/app/collaborators/new');
+    await authPage.getByTestId('collaborator-form-name').fill(nome);
+    await authPage.getByTestId('collaborator-form-role').fill('Recreador');
+    await authPage.getByTestId('collaborator-form-save').click();
+
+    await authPage.waitForURL(/\/app\/collaborators\/list(\?|$)/, { timeout: 10_000 });
+
+    const res = await authApi.get('/api/collaborators');
+    expect(res.ok()).toBe(true);
+    const body = await res.json();
+    const items = body.data?.items ?? body.items ?? body.data ?? body;
+    const list = Array.isArray(items) ? items : items.items ?? [];
+    expect(list.some((c: { name?: string }) => c.name === nome)).toBe(true);
+  });
 });

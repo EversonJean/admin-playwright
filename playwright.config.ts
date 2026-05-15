@@ -20,7 +20,10 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 2 : 4,
+  // Angular dev server (ng serve) local nao aguenta 4 workers simultaneos
+  // em testes UI pesados (form fill + submit + waitForURL). 2 workers eh o
+  // sweet spot: paralelismo razoavel sem timeouts intermitentes.
+  workers: 2,
   reporter: [
     ['html', { open: 'never' }],
     ['list'],
