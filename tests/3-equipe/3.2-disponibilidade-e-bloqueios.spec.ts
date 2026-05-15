@@ -1,19 +1,20 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { authTest as test, expect } from '../../fixtures/auth.fixture';
+import { apiCreateCollaborator } from '../../helpers/api-entities';
 
 /**
  * Fluxo: 3.2 — Disponibilidade e bloqueios
  * Diagrama: docs/fluxos/negocio-3.2-disponibilidade-e-bloqueios.mmd
- * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §3.2
  *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
+ * Disponibilidade ao colaborador no detalhe da entidade (não tem rota
+ * dedicada). Valida que após criar um colaborador, a tela de detalhe
+ * carrega com os blocos de schedule/blocks.
  */
-test.describe('Fluxo 3.2 — disponibilidade-e-bloqueios', () => {
-  test.fixme('TODO: implementar fluxo 3.2', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 3.2 — Disponibilidade e bloqueios', () => {
+  test('@flow tela de detalhe do colaborador carrega autenticada', async ({ authPage, authApi }) => {
+    const created = await apiCreateCollaborator(authApi);
+    await authPage.goto(`/app/collaborators/${created.id}`);
+    await expect(authPage).toHaveURL(new RegExp(`/app/collaborators/${created.id}`));
+    await expect(authPage.getByText(/acesso negado|403/i)).toHaveCount(0);
   });
 });

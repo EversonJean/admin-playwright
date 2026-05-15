@@ -1,19 +1,25 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { authTest as test } from '../../fixtures/auth.fixture';
+import { smokeRoute } from '../../helpers/smoke';
 
 /**
- * Fluxo: 9.5 — Contratos com parceiro e colaborador
+ * Fluxo: 9.5 — Outros tipos de contrato (parceiro, colaborador)
  * Diagrama: docs/fluxos/negocio-9.5-contratos-parceiro-e-colaborador.mmd
- * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §9.5
- *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
  */
-test.describe('Fluxo 9.5 — contratos-parceiro-e-colaborador', () => {
-  test.fixme('TODO: implementar fluxo 9.5', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 9.5 — Contratos parceiro e colaborador', () => {
+  test('@flow listagem de contratos de parceiro carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/contracts/partner/list');
+  });
+
+  test('@flow criação de contrato de parceiro carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/contracts/partner/new');
+  });
+
+  test('@flow listagem de contratos de colaborador carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/contracts/collaborator/list');
+  });
+
+  test('@flow criação de contrato de colaborador carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/contracts/collaborator/new');
   });
 });

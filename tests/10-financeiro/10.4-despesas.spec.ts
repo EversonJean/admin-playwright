@@ -1,19 +1,20 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { authTest as test, expect } from '../../fixtures/auth.fixture';
 
 /**
- * Fluxo: 10.4 — Despesas operacionais do evento
+ * Fluxo: 10.4 — Despesas
  * Diagrama: docs/fluxos/negocio-10.4-despesas.mmd
- * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §10.4
  *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
+ * Despesas têm endpoint /api/expenses. Smoke do endpoint + tela de relatórios.
  */
-test.describe('Fluxo 10.4 — despesas', () => {
-  test.fixme('TODO: implementar fluxo 10.4', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 10.4 — Despesas', () => {
+  test('@flow GET /api/expenses responde sem 500', async ({ authApi }) => {
+    const res = await authApi.get('/api/expenses');
+    expect(res.status()).toBeLessThan(500);
+  });
+
+  test('@flow tela de relatórios financeiros carrega autenticada', async ({ authPage }) => {
+    const res = await authPage.goto('/app/finance/reports');
+    expect(res?.status() ?? 0).toBeLessThan(500);
   });
 });

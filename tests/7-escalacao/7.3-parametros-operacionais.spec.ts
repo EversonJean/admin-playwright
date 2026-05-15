@@ -1,19 +1,27 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { authTest as test } from '../../fixtures/auth.fixture';
+import { smokeRoute } from '../../helpers/smoke';
 
 /**
- * Fluxo: 7.3 — Parâmetros operacionais da agenda
+ * Fluxo: 7.3 — Parâmetros operacionais (configuráveis por empresa)
  * Diagrama: docs/fluxos/negocio-7.3-parametros-operacionais.mmd
- * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §7.3
  *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
+ * Inclui modalidades, níveis, prazos de pagamento — todos sob /app/settings/*.
  */
-test.describe('Fluxo 7.3 — parametros-operacionais', () => {
-  test.fixme('TODO: implementar fluxo 7.3', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 7.3 — Parâmetros operacionais', () => {
+  test('@flow modalidades carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/settings/service-modalities');
+  });
+
+  test('@flow níveis de colaborador carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/settings/collaborator-levels');
+  });
+
+  test('@flow termos de pagamento carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/settings/payment-terms');
+  });
+
+  test('@flow tela geral de parâmetros carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/settings/parameters');
   });
 });

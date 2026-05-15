@@ -1,19 +1,16 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { authTest as test, expect } from '../../fixtures/auth.fixture';
 
 /**
  * Fluxo: 4.4 — Conversão de lead
  * Diagrama: docs/fluxos/negocio-4.4-conversao-de-lead.mmd
- * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §4.4
  *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
+ * Conversão lead → cliente faz parte do add-on Leads/CRM. Pra um tenant
+ * sem `feature_leads`, a rota responde com módulo bloqueado.
  */
-test.describe('Fluxo 4.4 — conversao-de-lead', () => {
-  test.fixme('TODO: implementar fluxo 4.4', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 4.4 — Conversão de lead', () => {
+  test('@flow rota de contacts (origem da conversão) carrega autenticada', async ({ authPage }) => {
+    const res = await authPage.goto('/app/contacts');
+    expect(res?.status() ?? 0).toBeLessThan(500);
   });
 });

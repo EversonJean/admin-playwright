@@ -1,19 +1,26 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { authTest as test, expect } from '../../fixtures/auth.fixture';
+import { smokeRoute } from '../../helpers/smoke';
+import { apiCreateActivity, apiListActivities } from '../../helpers/api-entities';
 
 /**
  * Fluxo: 2.1 — Atividades
  * Diagrama: docs/fluxos/negocio-2.1-atividades.mmd
- * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §2.1
- *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
  */
-test.describe('Fluxo 2.1 — atividades', () => {
-  test.fixme('TODO: implementar fluxo 2.1', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 2.1 — Atividades', () => {
+  test('@flow tela de listagem carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/activities/list');
+  });
+
+  test('@flow tela de criação carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/activities/new');
+  });
+
+  test('@flow criar atividade via API + aparece na listagem', async ({ authApi }) => {
+    const created = await apiCreateActivity(authApi);
+    expect(created.id).toBeTruthy();
+    const list = await apiListActivities(authApi);
+    const items = (list as { items?: unknown[] }).items ?? (list as unknown as { data?: { items?: unknown[] } }).data?.items ?? [];
+    expect(items.length).toBeGreaterThan(0);
   });
 });

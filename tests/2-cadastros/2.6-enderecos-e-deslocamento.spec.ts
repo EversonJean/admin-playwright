@@ -1,19 +1,21 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { authTest as test } from '../../fixtures/auth.fixture';
+import { smokeRoute } from '../../helpers/smoke';
 
 /**
  * Fluxo: 2.6 — Endereços e deslocamento
  * Diagrama: docs/fluxos/negocio-2.6-enderecos-e-deslocamento.mmd
- * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §2.6
  *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
+ * O Address é Value Object embutido (Tenant, Client, Collaborator, Event).
+ * Aqui validamos a tela de tabela de deslocamento (settings/displacement)
+ * usada pelo cálculo de frete por distância (Etapa 35).
  */
-test.describe('Fluxo 2.6 — enderecos-e-deslocamento', () => {
-  test.fixme('TODO: implementar fluxo 2.6', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 2.6 — Endereços e deslocamento', () => {
+  test('@flow tela de tabela de deslocamento carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/settings/displacement');
+  });
+
+  test('@flow tela de criação de regra carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/settings/displacement/new');
   });
 });

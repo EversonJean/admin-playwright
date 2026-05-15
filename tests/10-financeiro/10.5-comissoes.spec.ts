@@ -1,19 +1,16 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { authTest as test, expect } from '../../fixtures/auth.fixture';
 
 /**
  * Fluxo: 10.5 — Comissões da equipe
  * Diagrama: docs/fluxos/negocio-10.5-comissoes.mmd
- * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §10.5
  *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
+ * Comissões são calculadas a partir das EventCollaborators e fechadas em
+ * períodos. Smoke do endpoint /api/commissions.
  */
-test.describe('Fluxo 10.5 — comissoes', () => {
-  test.fixme('TODO: implementar fluxo 10.5', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 10.5 — Comissões', () => {
+  test('@flow GET /api/commissions responde sem 500', async ({ authApi }) => {
+    const res = await authApi.get('/api/commissions');
+    expect(res.status()).toBeLessThan(500);
   });
 });

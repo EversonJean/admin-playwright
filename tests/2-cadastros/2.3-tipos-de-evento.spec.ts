@@ -1,19 +1,17 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { authTest as test } from '../../fixtures/auth.fixture';
+import { smokeRoute } from '../../helpers/smoke';
 
 /**
- * Fluxo: 2.3 — Tipos de evento (Modalidades e Categorias)
+ * Fluxo: 2.3 — Tipos de evento
  * Diagrama: docs/fluxos/negocio-2.3-tipos-de-evento.mmd
- * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §2.3
- *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
  */
-test.describe('Fluxo 2.3 — tipos-de-evento', () => {
-  test.fixme('TODO: implementar fluxo 2.3', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 2.3 — Tipos de evento', () => {
+  test('@flow tela de listagem carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/settings/event-categories');
+  });
+
+  test('@flow tela de criação carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/settings/event-categories/new');
   });
 });

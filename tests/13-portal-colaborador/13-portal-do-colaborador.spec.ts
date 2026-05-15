@@ -1,19 +1,17 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { test, expect } from '@playwright/test';
 
 /**
- * Fluxo: 13 — Portal do colaborador (mobile-first)
+ * Fluxo: 13 — Portal do colaborador
  * Diagrama: docs/fluxos/negocio-13-portal-do-colaborador.mmd
- * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §13
  *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
+ * Portal `/portal/*` é acessado pelo colaborador com role CollaboratorPortal.
+ * Cobertura completa exige criar Collaborator → User → enviar invite →
+ * aceitar → logar. Aqui smoke da rota pública (redirect pra login).
  */
-test.describe('Fluxo 13 — portal-do-colaborador', () => {
-  test.fixme('TODO: implementar fluxo 13', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 13 — Portal do colaborador', () => {
+  test('@flow rota /portal redireciona anônimo pra login', async ({ page }) => {
+    await page.goto('/portal');
+    await expect(page).toHaveURL(/\/auth\/login/);
   });
 });

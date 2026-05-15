@@ -29,13 +29,15 @@ export function execSql(sql: string): string {
 }
 
 /**
- * Marca o email como confirmado direto no banco — usado após signup nos testes
- * E2E pra pular a etapa de verificação por email (que normalmente exigiria
- * acessar inbox real).
+ * Marca o usuário como ativo direto no banco — usado após signup nos testes
+ * E2E pra pular a etapa de verificação por email. O signup cria User com
+ * Status='PendingEmailVerification'; aqui força pra 'Active', que é o estado
+ * pós-confirmação esperado pelos endpoints autenticados.
  */
 export function confirmEmailDirect(email: string): void {
+  const safeEmail = email.replace(/'/g, "''");
   execSql(
-    `UPDATE "Users" SET "EmailConfirmed" = TRUE WHERE LOWER("Email") = LOWER('${email.replace(/'/g, "''")}');`,
+    `UPDATE "Users" SET "Status" = 'Active' WHERE LOWER("Email") = LOWER('${safeEmail}');`,
   );
 }
 

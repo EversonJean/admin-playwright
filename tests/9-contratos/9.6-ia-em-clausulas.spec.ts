@@ -1,19 +1,18 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { authTest as test, expect } from '../../fixtures/auth.fixture';
 
 /**
- * Fluxo: 9.6 — IA para criação de cláusulas (add-on)
+ * Fluxo: 9.6 — IA em cláusulas (add-on)
  * Diagrama: docs/fluxos/negocio-9.6-ia-em-clausulas.mmd
- * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §9.6
  *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
+ * Add-on `feature_ai` gera/refina cláusulas via LLM. Validação E2E completa
+ * exige mockar o provider de IA (fora de escopo local). Smoke da rota AI.
+ *
+ * TODO E2E: cobrir quando o time decidir como mockar o provider de IA.
  */
-test.describe('Fluxo 9.6 — ia-em-clausulas', () => {
-  test.fixme('TODO: implementar fluxo 9.6', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 9.6 — IA em cláusulas', () => {
+  test('@flow tela de AI carrega autenticada (com ou sem add-on)', async ({ authPage }) => {
+    const res = await authPage.goto('/app/ai');
+    expect(res?.status() ?? 0).toBeLessThan(500);
   });
 });

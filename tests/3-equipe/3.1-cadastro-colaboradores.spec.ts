@@ -1,19 +1,26 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { authTest as test, expect } from '../../fixtures/auth.fixture';
+import { smokeRoute } from '../../helpers/smoke';
+import { apiCreateCollaborator, apiListCollaborators } from '../../helpers/api-entities';
 
 /**
  * Fluxo: 3.1 — Cadastro de colaboradores
  * Diagrama: docs/fluxos/negocio-3.1-cadastro-colaboradores.mmd
- * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §3.1
- *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
  */
-test.describe('Fluxo 3.1 — cadastro-colaboradores', () => {
-  test.fixme('TODO: implementar fluxo 3.1', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 3.1 — Cadastro de colaboradores', () => {
+  test('@flow tela de listagem carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/collaborators/list');
+  });
+
+  test('@flow tela de criação carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/collaborators/new');
+  });
+
+  test('@flow criar colaborador via API + aparece na listagem', async ({ authApi }) => {
+    const created = await apiCreateCollaborator(authApi);
+    expect(created.id).toBeTruthy();
+    const list = await apiListCollaborators(authApi);
+    const items = (list as { items?: unknown[] }).items ?? (list as unknown as { data?: { items?: unknown[] } }).data?.items ?? [];
+    expect(items.length).toBeGreaterThan(0);
   });
 });

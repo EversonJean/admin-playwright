@@ -1,19 +1,15 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { authTest as test } from '../../fixtures/auth.fixture';
+import { smokeRoute } from '../../helpers/smoke';
 
 /**
  * Fluxo: 10.3 — Ajustes financeiros imutáveis
  * Diagrama: docs/fluxos/negocio-10.3-ajustes-financeiros.mmd
- * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §10.3
  *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
+ * Ajustes acontecem no detalhe do Event. Smoke da listagem.
  */
-test.describe('Fluxo 10.3 — ajustes-financeiros', () => {
-  test.fixme('TODO: implementar fluxo 10.3', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 10.3 — Ajustes financeiros', () => {
+  test('@flow tela de recebíveis carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/finance/receivables');
   });
 });

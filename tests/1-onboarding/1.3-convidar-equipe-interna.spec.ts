@@ -1,19 +1,19 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { authTest as test, expect } from '../../fixtures/auth.fixture';
+import { smokeRoute } from '../../helpers/smoke';
 
 /**
- * Fluxo: 1.3 — Convidar a equipe interna
+ * Fluxo: 1.3 — Convidar equipe interna
  * Diagrama: docs/fluxos/negocio-1.3-convidar-equipe-interna.mmd
  * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §1.3
- *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
  */
-test.describe('Fluxo 1.3 — convidar-equipe-interna', () => {
-  test.fixme('TODO: implementar fluxo 1.3', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 1.3 — Convidar equipe interna', () => {
+  test('@flow tela de invites carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/users/invites');
+  });
+
+  test('@flow chamar endpoint de invites autenticado não retorna 500', async ({ authApi }) => {
+    const res = await authApi.get('/api/invitations');
+    expect(res.status()).toBeLessThan(500);
   });
 });

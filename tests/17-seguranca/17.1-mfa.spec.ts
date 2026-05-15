@@ -1,19 +1,23 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { authTest as test } from '../../fixtures/auth.fixture';
+import { smokeRoute } from '../../helpers/smoke';
 
 /**
- * Fluxo: 17.1 — Autenticação em dois fatores (MFA)
+ * Fluxo: 17.1 — MFA (TOTP + Email OTP + Backup codes)
  * Diagrama: docs/fluxos/negocio-17.1-mfa.mmd
- * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §17.1
  *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
+ * Setup MFA completo exige TOTP secret + código válido. Aqui smoke das
+ * telas de configuração e segurança.
+ *
+ * TODO E2E: cobrir fluxo TOTP completo usando lib `otplib` no teste pra
+ * gerar códigos válidos a partir do secret retornado pelo back.
  */
-test.describe('Fluxo 17.1 — mfa', () => {
-  test.fixme('TODO: implementar fluxo 17.1', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 17.1 — MFA', () => {
+  test('@flow tela de segurança carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/settings/security');
+  });
+
+  test('@flow tela de setup MFA carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/settings/mfa');
   });
 });

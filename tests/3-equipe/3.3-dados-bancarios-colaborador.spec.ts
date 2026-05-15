@@ -1,19 +1,18 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { authTest as test, expect } from '../../fixtures/auth.fixture';
+import { apiCreateCollaborator } from '../../helpers/api-entities';
 
 /**
- * Fluxo: 3.3 — Dados bancários do colaborador
+ * Fluxo: 3.3 — Dados bancários (PayoutProfile)
  * Diagrama: docs/fluxos/negocio-3.3-dados-bancarios-colaborador.mmd
- * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §3.3
  *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
+ * PayoutProfile mora dentro do detalhe do colaborador. Valida que o endpoint
+ * de leitura de profile responde (mesmo que vazio) sem 500 nem 403.
  */
-test.describe('Fluxo 3.3 — dados-bancarios-colaborador', () => {
-  test.fixme('TODO: implementar fluxo 3.3', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 3.3 — Dados bancários (PayoutProfile)', () => {
+  test('@flow GET /payout-profile do colaborador responde sem 500', async ({ authApi }) => {
+    const created = await apiCreateCollaborator(authApi);
+    const res = await authApi.get(`/api/collaborators/${created.id}/payout-profile`);
+    expect(res.status()).toBeLessThan(500);
   });
 });

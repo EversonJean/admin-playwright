@@ -1,19 +1,16 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { authTest as test, expect } from '../../fixtures/auth.fixture';
 
 /**
  * Fluxo: 5.4 — Versionamento do orçamento
  * Diagrama: docs/fluxos/negocio-5.4-versionamento-orcamento.mmd
- * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §5.4
  *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
+ * Cada update do Budget cria nova versão (versions endpoint). Validar
+ * inteiramente exige criar Budget + atualizar. Aqui smoke da rota de detalhe.
  */
-test.describe('Fluxo 5.4 — versionamento-orcamento', () => {
-  test.fixme('TODO: implementar fluxo 5.4', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 5.4 — Versionamento', () => {
+  test('@flow listagem de orçamentos carrega autenticada', async ({ authPage }) => {
+    const res = await authPage.goto('/app/budgets/list');
+    expect(res?.status() ?? 0).toBeLessThan(500);
   });
 });

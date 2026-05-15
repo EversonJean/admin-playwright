@@ -1,19 +1,20 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { test, expect } from '@playwright/test';
 
 /**
- * Fluxo: 16.1 — Gestão de tenants (Super Admin)
+ * Fluxo: 16.1 — Gestão de tenants (SuperAdmin)
  * Diagrama: docs/fluxos/negocio-16.1-gestao-de-tenants.mmd
- * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §16.1
  *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
+ * Área SuperAdmin requer usuário com role `SuperAdmin` (não criado pelo
+ * signup público). Cobertura completa exige fixture própria de SuperAdmin.
+ * Aqui smoke da rota pública (redirect pra login).
+ *
+ * TODO E2E: criar fixture `superAdminTest` que loga com seed SuperAdmin
+ * global (`superadmin@dev.local`, criado no startup do back em Dev).
  */
-test.describe('Fluxo 16.1 — gestao-de-tenants', () => {
-  test.fixme('TODO: implementar fluxo 16.1', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 16.1 — Gestão de tenants (SuperAdmin)', () => {
+  test('@flow rota /super-admin redireciona anônimo pra login', async ({ page }) => {
+    await page.goto('/super-admin');
+    await expect(page).toHaveURL(/\/auth\/login/);
   });
 });

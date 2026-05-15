@@ -41,7 +41,7 @@ export async function signupAndConfirm(
   const signupRes = await api.post('/api/auth/signup', {
     data: {
       companyName: input.companyName,
-      adminName: input.adminName,
+      userName: input.adminName,
       email: input.adminEmail,
       password: input.adminPassword,
     },
@@ -64,14 +64,16 @@ export async function signupAndConfirm(
   }
 
   const loginBody = await loginRes.json();
+  // Backend envelopa em Result: { isError, data: {...}, errors }
+  const payload = loginBody.data ?? loginBody;
 
   return {
     email: input.adminEmail,
     password: input.adminPassword,
-    accessToken: loginBody.accessToken ?? loginBody.token,
-    refreshToken: loginBody.refreshToken,
-    userId: loginBody.userId ?? loginBody.user?.id,
-    tenantId: loginBody.tenantId ?? loginBody.user?.tenantId,
+    accessToken: payload.accessToken ?? payload.token,
+    refreshToken: payload.refreshToken,
+    userId: payload.userId ?? payload.user?.id,
+    tenantId: payload.tenantId ?? payload.user?.tenantId,
   };
 }
 

@@ -1,19 +1,26 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { authTest as test, expect } from '../../fixtures/auth.fixture';
 
 /**
  * Fluxo: 1.4 — Perfis e permissões
  * Diagrama: docs/fluxos/negocio-1.4-perfis-e-permissoes.mmd
  * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §1.4
- *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
  */
-test.describe('Fluxo 1.4 — perfis-e-permissoes', () => {
-  test.fixme('TODO: implementar fluxo 1.4', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 1.4 — Perfis e permissões', () => {
+  test('@flow GET /me/permissions devolve permissões do admin do tenant', async ({ authApi }) => {
+    const res = await authApi.get('/api/me/permissions');
+    if (!res.ok()) {
+      throw new Error(`Status ${res.status()}: ${await res.text()}`);
+    }
+    const body = await res.json();
+    const perms = body.data?.permissions ?? body.permissions ?? [];
+    expect(Array.isArray(perms)).toBe(true);
+    expect(perms.length).toBeGreaterThan(0);
+  });
+
+  test('@flow admin recém-criado consegue acessar dashboard', async ({ authPage }) => {
+    await authPage.goto('/app/dashboard');
+    await expect(authPage).toHaveURL(/\/app\/dashboard/);
+    await expect(authPage.getByText(/acesso negado|403/i)).toHaveCount(0);
   });
 });

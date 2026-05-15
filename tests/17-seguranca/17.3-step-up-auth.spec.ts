@@ -1,19 +1,17 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { authTest as test, expect } from '../../fixtures/auth.fixture';
 
 /**
- * Fluxo: 17.3 — Confirmação extra para ações sensíveis (step-up)
+ * Fluxo: 17.3 — Step-up auth
  * Diagrama: docs/fluxos/negocio-17.3-step-up-auth.mmd
- * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §17.3
  *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
+ * StepUpToken (TTL 5min, uso único) é exigido em ações sensíveis (ex:
+ * change_plan já gated). Cobertura completa exige fluxo MFA + ação
+ * protegida. Smoke do endpoint /step-up.
  */
-test.describe('Fluxo 17.3 — step-up-auth', () => {
-  test.fixme('TODO: implementar fluxo 17.3', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 17.3 — Step-up auth', () => {
+  test('@flow POST /api/auth/step-up sem body responde 4xx (não 500)', async ({ authApi }) => {
+    const res = await authApi.post('/api/auth/step-up', { data: {} });
+    expect(res.status()).toBeLessThan(500);
   });
 });

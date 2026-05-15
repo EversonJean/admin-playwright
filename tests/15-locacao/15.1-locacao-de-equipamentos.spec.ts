@@ -1,19 +1,21 @@
-import { tenantTest as test } from '../../fixtures/tenant.fixture';
+import { authTest as test, expect } from '../../fixtures/auth.fixture';
 
 /**
- * Fluxo: 15.1 — Locação de equipamentos (add-on)
+ * Fluxo: 15.1 — Locação de equipamentos
  * Diagrama: docs/fluxos/negocio-15.1-locacao-de-equipamentos.mmd
- * Especificação: docs/FUNCIONALIDADES-NEGOCIO.md §15.1
  *
- * Como implementar:
- *  1. Abrir o .mmd no VSCode (preview Mermaid) ou em https://mermaid.live
- *  2. Cada caixa numerada (N01, N02, ...) vira 1+ ação/assert no teste
- *  3. Decisões (losangos) viram `test()` separados (golden + alternativas)
- *  4. Trocar `test.fixme` por `test` quando rodar verde
+ * Stock + Rentals são add-ons gated (`feature_stock_advanced`). Sem o
+ * entitlement ligado, rotas respondem com módulo bloqueado.
  */
-test.describe('Fluxo 15.1 — locacao-de-equipamentos', () => {
-  test.fixme('TODO: implementar fluxo 15.1', async ({ page, tenant }) => {
-    // tenant.accessToken, tenant.email, tenant.companyName disponíveis aqui
-    // page já tem ignoreHTTPSErrors e baseURL configurados (http://localhost:4200)
+
+test.describe('Fluxo 15.1 — Locação de equipamentos', () => {
+  test('@flow rota /stock carrega autenticada', async ({ authPage }) => {
+    const res = await authPage.goto('/app/stock');
+    expect(res?.status() ?? 0).toBeLessThan(500);
+  });
+
+  test('@flow rota /rentals carrega autenticada', async ({ authPage }) => {
+    const res = await authPage.goto('/app/rentals');
+    expect(res?.status() ?? 0).toBeLessThan(500);
   });
 });
