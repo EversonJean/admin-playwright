@@ -77,6 +77,22 @@ async function triggerWebhook<T>(provider: FakeProvider, body: T): Promise<{ bac
   }
 }
 
+// ─── OpenAI / Anthropic ─────────────────────────────────────────────────────
+
+export const fakeOpenAi = {
+  baseUrl: URLS.openai,
+  inbox: (filter?: { tenantId?: string; path?: string; since?: string }) =>
+    fetchInbox('openai', filter),
+  clear: () => clearInbox('openai'),
+};
+
+export const fakeAnthropic = {
+  baseUrl: URLS.anthropic,
+  inbox: (filter?: { tenantId?: string; path?: string; since?: string }) =>
+    fetchInbox('anthropic', filter),
+  clear: () => clearInbox('anthropic'),
+};
+
 // ─── Email (HTTP REST) ──────────────────────────────────────────────────────
 
 export interface FakeEmailEntry {
