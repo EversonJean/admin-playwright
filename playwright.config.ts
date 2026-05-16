@@ -55,14 +55,16 @@ export default defineConfig({
     : [
         {
           name: 'admin-backend',
-          command: `dotnet run --project "${BACK_PROJECT_PATH}" --launch-profile https`,
+          // Profile `e2e` no launchSettings.json fixa ASPNETCORE_ENVIRONMENT=E2E
+          // (que carrega appsettings.E2E.json: Outbox in-memory + endpoints
+          // `/api/_e2e/*`). Definir ASPNETCORE_ENVIRONMENT no `env` abaixo NÃO
+          // funciona — launchSettings.json sobrescreve.
+          command: `dotnet run --project "${BACK_PROJECT_PATH}" --launch-profile e2e`,
           url: `${BACK_URL}/health`,
           timeout: 180_000,
           reuseExistingServer: !process.env.CI,
           ignoreHTTPSErrors: true,
           env: {
-            ASPNETCORE_ENVIRONMENT: 'Development',
-            ASPNETCORE_HTTPS_PORT: '1501',
             ConnectionStrings__Default: BACK_CONNECTION_STRING,
           },
         },
