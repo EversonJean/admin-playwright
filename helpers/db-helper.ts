@@ -42,6 +42,22 @@ export function confirmEmailDirect(email: string): void {
 }
 
 /**
+ * Força status do orçamento direto no banco — usado pra simular cenários que
+ * não têm endpoint público (ex: cliente comunica recusa por fora, gestor
+ * historicamente marcou como Refused; ou orçamento expirou). Necessário pro
+ * fluxo de versionamento (restart-as-draft só aceita Refused/Expired como
+ * origem da transição).
+ *
+ * `status` aceita string do enum BudgetStatus (Draft/Sent/Accepted/Refused/
+ * Expired/Canceled) — o EF persiste enum por nome (ProviderValueComparer).
+ */
+export function setBudgetStatusDirect(budgetId: string, status: string): void {
+  const safeId = budgetId.replace(/'/g, "''");
+  const safeStatus = status.replace(/'/g, "''");
+  execSql(`UPDATE "Budgets" SET "Status" = '${safeStatus}' WHERE "Id" = '${safeId}';`);
+}
+
+/**
  * Conta tenants — útil pra smoke tests de "API está respondendo e DB tem dados".
  */
 export function countTenants(): number {
