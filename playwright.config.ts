@@ -78,6 +78,13 @@ export default defineConfig({
           reuseExistingServer: !process.env.CI,
         },
         {
+          name: 'fake-email',
+          command: 'npm run fakes:email',
+          url: 'http://localhost:1513/_control/health',
+          timeout: 30_000,
+          reuseExistingServer: !process.env.CI,
+        },
+        {
           name: 'admin-backend',
           // Profile `e2e` no launchSettings.json fixa ASPNETCORE_ENVIRONMENT=E2E
           // (que carrega appsettings.E2E.json: Outbox in-memory + endpoints

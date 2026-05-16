@@ -77,6 +77,50 @@ async function triggerWebhook<T>(provider: FakeProvider, body: T): Promise<{ bac
   }
 }
 
+// ─── Email (HTTP REST) ──────────────────────────────────────────────────────
+
+export interface FakeEmailEntry {
+  id: string;
+  receivedAt: string;
+  to: string;
+  subject: string;
+  bodyHtml: string;
+  bodyText?: string;
+  from?: string;
+  fromName?: string;
+}
+
+export const fakeEmail = {
+  baseUrl: URLS.email,
+  inbox: (filter?: { tenantId?: string; path?: string; since?: string }) =>
+    fetchInbox('email', filter),
+  /** Lista emails parseados (helper especifico do fake email). */
+  emails: async (filter?: { to?: string; subject?: string }): Promise<FakeEmailEntry[]> => {
+    const api = await ctx();
+    try {
+      const params = new URLSearchParams();
+      if (filter?.to) params.set('to', filter.to);
+      if (filter?.subject) params.set('subject', filter.subject);
+      const qs = params.toString() ? `?${params.toString()}` : '';
+      const res = await api.get(`${URLS.email}/_control/emails${qs}`);
+      if (!res.ok()) throw new Error(`fake email list: ${res.status()}`);
+      const body = (await res.json()) as { items: FakeEmailEntry[]; total: number };
+      return body.items;
+    } finally {
+      await api.dispose();
+    }
+  },
+  clear: () => clearInbox('email'),
+  resetState: async (): Promise<void> => {
+    const api = await ctx();
+    try {
+      await api.delete(`${URLS.email}/_control/state`);
+    } finally {
+      await api.dispose();
+    }
+  },
+};
+
 // ─── WhatsApp Meta ──────────────────────────────────────────────────────────
 
 export const fakeWhatsApp = {
