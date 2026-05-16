@@ -58,6 +58,28 @@ export function setBudgetStatusDirect(budgetId: string, status: string): void {
 }
 
 /**
+ * Habilita um entitlement (feature flag bool) para um tenant via INSERT direto
+ * em AddonActivations. Usado pra testar telas com `entitlementGuard` no front
+ * (feature_leads, feature_equipment_rental, feature_stock, feature_ai,
+ * feature_whatsapp, feature_conversations) sem precisar passar pelo fluxo
+ * completo de assinatura de plano.
+ *
+ * AddonCode usa "e2e_test" pra deixar rastreável que veio dos testes.
+ */
+export function enableFeatureFlagDirect(tenantId: string, entitlementKey: string): void {
+  const safeTenant = tenantId.replace(/'/g, "''");
+  const safeKey = entitlementKey.replace(/'/g, "''").toLowerCase();
+  execSql(`
+    INSERT INTO "AddonActivations"
+      ("Id", "TenantId", "AddonCode", "EntitlementKey", "Type", "ValueBool",
+       "IsActive", "ActivatedAt", "CreatedAt", "UpdatedAt", "IsDeleted")
+    VALUES
+      (gen_random_uuid(), '${safeTenant}', 'e2e_test', '${safeKey}', 'Bool', true,
+       true, now(), now(), now(), false);
+  `);
+}
+
+/**
  * Conta tenants — útil pra smoke tests de "API está respondendo e DB tem dados".
  */
 export function countTenants(): number {
