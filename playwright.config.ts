@@ -99,6 +99,13 @@ export default defineConfig({
           reuseExistingServer: !process.env.CI,
         },
         {
+          name: 'fake-google-maps',
+          command: 'npm run fakes:maps',
+          url: 'http://localhost:1516/_control/health',
+          timeout: 30_000,
+          reuseExistingServer: !process.env.CI,
+        },
+        {
           name: 'admin-backend',
           // Profile `e2e` no launchSettings.json fixa ASPNETCORE_ENVIRONMENT=E2E
           // (que carrega appsettings.E2E.json: Outbox in-memory + endpoints

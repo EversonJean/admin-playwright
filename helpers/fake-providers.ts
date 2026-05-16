@@ -77,6 +77,15 @@ async function triggerWebhook<T>(provider: FakeProvider, body: T): Promise<{ bac
   }
 }
 
+// ─── Google Maps ────────────────────────────────────────────────────────────
+
+export const fakeGoogleMaps = {
+  baseUrl: URLS.googleMaps,
+  inbox: (filter?: { tenantId?: string; path?: string; since?: string }) =>
+    fetchInbox('googleMaps', filter),
+  clear: () => clearInbox('googleMaps'),
+};
+
 // ─── OpenAI / Anthropic ─────────────────────────────────────────────────────
 
 export const fakeOpenAi = {

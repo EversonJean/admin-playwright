@@ -1,5 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
+import { fakeGoogleMaps } from '../../helpers/fake-providers';
 
 /**
  * Fluxo: 2.6 — Endereços e deslocamento
@@ -46,5 +47,48 @@ test.describe('Fluxo 2.6 — Endereços e deslocamento', () => {
     await expect(authPage.locator('simple-snack-bar', { hasText: /Regra criada/i })).toBeVisible({
       timeout: 5_000,
     });
+  });
+
+  test('@crud GET /api/places/autocomplete chama fake Google Maps e devolve predictions', async ({
+    authApi,
+  }) => {
+    const since = new Date().toISOString();
+    const res = await authApi.get('/api/places/autocomplete?input=Rua%20das%20Festas');
+    expect(res.ok()).toBe(true);
+    const body = await res.json();
+    const predictions: Array<{ placeId: string; description: string }> = body.data ?? body;
+    expect(Array.isArray(predictions)).toBe(true);
+    expect(predictions.length, 'fake deve devolver pelo menos 1 prediction').toBeGreaterThan(0);
+    expect(predictions[0]!.placeId).toMatch(/^fake_place_/);
+
+    // Fake recebeu o GET /maps/api/place/autocomplete/json com key
+    const inbox = await fakeGoogleMaps.inbox({ since });
+    const calls = inbox.filter((e) =>
+      e.path.startsWith('/maps/api/place/autocomplete/json'),
+    );
+    expect(calls.length, 'fake deve ter recebido autocomplete').toBeGreaterThanOrEqual(1);
+    expect(calls[0]!.path).toContain('key=fake-googlemaps-key-e2e');
+  });
+
+  test('@crud GET /api/places/details/:id devolve geometry do fake', async ({ authApi }) => {
+    const since = new Date().toISOString();
+    // Pega um placeId valido via autocomplete primeiro
+    const autoRes = await authApi.get('/api/places/autocomplete?input=Curitiba');
+    expect(autoRes.ok()).toBe(true);
+    const autoBody = await autoRes.json();
+    const autoArr: Array<{ placeId: string }> = autoBody.data ?? autoBody;
+    const placeId = autoArr[0]?.placeId ?? '';
+    expect(placeId).toMatch(/^fake_place_/);
+
+    const detailsRes = await authApi.get(`/api/places/details/${placeId}`);
+    expect(detailsRes.ok()).toBe(true);
+    const detailsBody = await detailsRes.json();
+    const details = detailsBody.data ?? detailsBody;
+    expect(details.formattedAddress).toContain('Curitiba');
+    expect(typeof details.latitude).toBe('number');
+    expect(typeof details.longitude).toBe('number');
+
+    const inbox = await fakeGoogleMaps.inbox({ since });
+    expect(inbox.some((e) => e.path.startsWith('/maps/api/place/details/json'))).toBe(true);
   });
 });
