@@ -3,16 +3,15 @@ import { authTest } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
 
 /**
- * Telas residuais — link-google + availability + mfa wizard.
+ * Settings residuais — link-google + endpoint negativo.
+ *
+ * NOTA: /app/availability era falso positivo (rota nao existe no
+ * tenant-app.routes; pertence ao portal do colaborador). Removida.
  */
 
 authTest.describe('Settings residuais (smoke)', () => {
   authTest('@flow /app/settings/link-google carrega autenticado', async ({ authPage }) => {
     await smokeRoute(authPage, '/app/settings/link-google');
-  });
-
-  authTest('@flow /app/availability (gestor view) carrega autenticado', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/availability');
   });
 
   authTest('@flow POST /api/auth/link-google sem token devolve 4xx', async ({ authApi }) => {

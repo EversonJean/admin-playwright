@@ -111,6 +111,39 @@ export function seedApprovedWhatsAppTemplateDirect(input: {
 }
 
 /**
+ * Cria User adicional num tenant com role especifico (Owner/Admin/Manager/
+ * Financial) reusando o PasswordHash do superadmin. Usado pra exercitar
+ * gates de permission (403) sem rodar fluxo de invite.
+ */
+export function seedUserWithRoleDirect(input: {
+  tenantId: string;
+  role: 'Owner' | 'Admin' | 'Manager' | 'Financial';
+  emailPrefix?: string;
+}): { email: string; password: string } {
+  const safeTenant = input.tenantId.replace(/'/g, "''");
+  const email = `${input.emailPrefix ?? 'user'}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@e2e.test`;
+  const safeEmail = email.replace(/'/g, "''");
+  const hash = execSql(
+    `SELECT "PasswordHash" FROM "Users" WHERE "Email" = 'superadmin@dev.local';`,
+  );
+  if (!hash) {
+    throw new Error('superadmin@dev.local nao seedado — rode npm run db:reset');
+  }
+  const safeHash = hash.replace(/'/g, "''");
+  execSql(`
+    INSERT INTO "Users"
+      ("Id", "TenantId", "Type", "Email", "PasswordHash", "Name",
+       "Role", "Status", "HasPasswordCredential", "FailedLoginAttempts",
+       "CreatedAt", "UpdatedAt", "IsDeleted")
+    VALUES
+      (gen_random_uuid(), '${safeTenant}', 'User', '${safeEmail}',
+       '${safeHash}', 'Test ${input.role}', '${input.role}', 'Active',
+       true, 0, now(), now(), false);
+  `);
+  return { email, password: 'Dev12345!' };
+}
+
+/**
  * Cria User com role=CollaboratorPortal vinculado a um Collaborator
  * existente, reusando o PasswordHash do `superadmin@dev.local` (senha
  * "Dev12345!"). Devolve email+senha pra login subsequente em portal.
