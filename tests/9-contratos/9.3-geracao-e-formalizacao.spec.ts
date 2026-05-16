@@ -7,7 +7,7 @@ import {
   createPublicApiContext,
   extractTokenFromPublicUrl,
 } from '../../helpers/api-event-flow';
-import { e2eSimulateClicksignSigned } from '../../helpers/e2e-api';
+import { fakeClicksign } from '../../helpers/fake-providers';
 import { enableFeatureFlagDirect } from '../../helpers/db-helper';
 
 /**
@@ -16,9 +16,10 @@ import { enableFeatureFlagDirect } from '../../helpers/db-helper';
  *
  * Fluxo completo end-to-end:
  *   evento aceito → criar contract template → gerar contract → enviar pra
- *   assinatura digital (LoggingDigitalSignatureProvider devolve providerKey)
- *   → simular webhook `sign` do Clicksign via /api/_e2e/... → contract vira
- *   Formalized.
+ *   assinatura digital (back faz POST real pro fake Clicksign em
+ *   http://localhost:1511, recebe providerDocumentKey/signerKey) → fake
+ *   dispara webhook `sign` HTTP real com HMAC valido pro back → contract
+ *   vira Formalized (passa pelo ClicksignWebhookController real).
  */
 
 test.describe('Fluxo 9.3 — Geração e formalização', () => {
@@ -150,14 +151,23 @@ test.describe('Fluxo 9.3 — Geração e formalização', () => {
       throw new Error(`send signature ${sendRes.status()}: ${await sendRes.text()}`);
     }
 
-    // 5. Pega o envelope criado pra extrair providerDocumentKey
+    // 5. Pega o envelope criado pra extrair providerDocumentKey (gerado
+    //    pelo fake ClickSign quando o back fez POST /documents)
     const envRes = await authApi.get(`/api/contracts/${contract.id}/digital-signature`);
     expect(envRes.ok()).toBe(true);
     const envelope = (await envRes.json()).data ?? (await envRes.json());
-    expect(envelope.providerDocumentKey).toBeTruthy();
+    expect(envelope.providerDocumentKey, 'envelope deve ter key vinda do fake ClickSign').toBeTruthy();
+    expect(envelope.providerDocumentKey).toMatch(/^fake_doc_/);
 
-    // 6. Simula o webhook do Clicksign avisando "sign" — back formaliza
-    await e2eSimulateClicksignSigned(envelope.providerDocumentKey);
+    // 6. Fake ClickSign dispara webhook 'sign' HTTP real com HMAC valido
+    //    pra /api/webhooks/clicksign — passa pelo controller real, valida
+    //    assinatura e processor formaliza o contrato.
+    const trigger = await fakeClicksign.triggerWebhook({
+      event: 'sign',
+      providerDocumentKey: envelope.providerDocumentKey,
+      providerSignerKey: envelope.providerSignerKey,
+    });
+    expect(trigger.backStatus, 'back deve aceitar webhook com HMAC correto').toBe(200);
 
     // 7. Contrato agora deve estar Formalized
     const finalRes = await authApi.get(`/api/contracts/${contract.id}`);

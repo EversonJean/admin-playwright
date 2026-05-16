@@ -77,6 +77,35 @@ async function triggerWebhook<T>(provider: FakeProvider, body: T): Promise<{ bac
   }
 }
 
+// ─── ClickSign ──────────────────────────────────────────────────────────────
+
+export const fakeClicksign = {
+  baseUrl: URLS.clicksign,
+  inbox: (filter?: { tenantId?: string; path?: string; since?: string }) =>
+    fetchInbox('clicksign', filter),
+  clear: () => clearInbox('clicksign'),
+  resetState: async (): Promise<void> => {
+    const api = await ctx();
+    try {
+      await api.delete(`${URLS.clicksign}/_control/state`);
+    } finally {
+      await api.dispose();
+    }
+  },
+  /**
+   * Dispara webhook real (HTTP) pro back em /api/webhooks/clicksign com
+   * HMAC SHA-256 calculado a partir do WebhookSecret. Eventos: `sign`,
+   * `auto_close`, `cancel`, `refuse`, etc.
+   */
+  triggerWebhook: (body: {
+    event: string;
+    providerDocumentKey: string;
+    providerSignerKey?: string;
+    occurredAt?: string;
+    reason?: string;
+  }) => triggerWebhook('clicksign', body),
+};
+
 // ─── Asaas ──────────────────────────────────────────────────────────────────
 
 export const fakeAsaas = {
