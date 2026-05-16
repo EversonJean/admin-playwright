@@ -111,6 +111,23 @@ export function seedApprovedWhatsAppTemplateDirect(input: {
 }
 
 /**
+ * Le o `FormPublicToken` do Event direto do DB. Nao eh exposto no
+ * EventDetailDto por padrao (Etapa 55 — token publico nao volta em
+ * /api/events/:id); aqui pegamos via SQL pra exercitar o endpoint
+ * publico /api/public/events/:token/form em E2E.
+ */
+export function getEventFormPublicTokenDirect(eventId: string): string {
+  const safeId = eventId.replace(/'/g, "''");
+  const token = execSql(
+    `SELECT "FormPublicToken" FROM "Events" WHERE "Id" = '${safeId}';`,
+  );
+  if (!token) {
+    throw new Error(`Event ${eventId} sem FormPublicToken (ou nao existe)`);
+  }
+  return token;
+}
+
+/**
  * Conta tenants — útil pra smoke tests de "API está respondendo e DB tem dados".
  */
 export function countTenants(): number {
