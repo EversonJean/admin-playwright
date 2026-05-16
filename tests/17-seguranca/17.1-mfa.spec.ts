@@ -1,9 +1,13 @@
+import { generateSync } from 'otplib';
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
 
 /**
  * Fluxo: 17.1 — MFA (TOTP + Email OTP + Backup codes)
  * Diagrama: docs/fluxos/negocio-17.1-mfa.mmd
+ *
+ * TOTP completo: enroll devolve secret -> otplib gera codigo valido a
+ * partir do mesmo secret -> verify aceita -> status passa pra enrolled.
  */
 
 test.describe('Fluxo 17.1 — MFA', () => {
@@ -43,11 +47,44 @@ test.describe('Fluxo 17.1 — MFA', () => {
   });
 
   test('@crud verify com codigo invalido devolve 400/401', async ({ authApi }) => {
-    // Enroll primeiro pra estar em "enrolling"
     await authApi.post('/api/auth/mfa/enroll');
     const r = await authApi.post('/api/auth/mfa/enroll/verify', {
       data: { code: '000000' },
     });
     expect([400, 401, 422]).toContain(r.status());
+  });
+
+  test('@crud TOTP enroll -> verify com codigo valido (otplib) -> status enrolled', async ({
+    authApi,
+  }) => {
+    const enrollRes = await authApi.post('/api/auth/mfa/enroll');
+    if (!enrollRes.ok()) {
+      throw new Error(`enroll ${enrollRes.status()}: ${await enrollRes.text()}`);
+    }
+    const enroll = (await enrollRes.json()).data ?? (await enrollRes.json());
+    const secret: string = enroll.secret;
+    expect(secret).toBeTruthy();
+
+    // Gera codigo TOTP a partir do MESMO secret usando otplib
+    // (compativel com Authenticator do Google/Authy — RFC 6238, 30s step).
+    const code = generateSync({ secret, strategy: 'totp' });
+    expect(code).toMatch(/^\d{6}$/);
+
+    const verifyRes = await authApi.post('/api/auth/mfa/enroll/verify', {
+      data: { code },
+    });
+    if (!verifyRes.ok()) {
+      throw new Error(`verify ${verifyRes.status()}: ${await verifyRes.text()}`);
+    }
+    const verify = (await verifyRes.json()).data ?? (await verifyRes.json());
+    // BackupCodesResponseDto: { codes: string[] }
+    expect(verify.codes, 'verify deve devolver backup codes').toBeTruthy();
+    expect(Array.isArray(verify.codes)).toBe(true);
+    expect(verify.codes.length).toBeGreaterThan(0);
+
+    const status = (await (await authApi.get('/api/auth/mfa/status')).json()).data;
+    expect(status.enrolled, 'apos verify, status.enrolled=true').toBe(true);
+    expect(status.hasBackupCodes).toBe(true);
+    expect(status.remainingBackupCodes).toBeGreaterThan(0);
   });
 });

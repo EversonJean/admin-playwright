@@ -138,7 +138,7 @@ export function seedCollaboratorPortalUserDirect(input: {
        "HasPasswordCredential", "FailedLoginAttempts",
        "CreatedAt", "UpdatedAt", "IsDeleted")
     VALUES
-      (gen_random_uuid(), '${safeTenant}', 'Tenant', '${safeEmail}',
+      (gen_random_uuid(), '${safeTenant}', 'User', '${safeEmail}',
        '${safeHash}', 'Portal User',
        'CollaboratorPortal', '${safeCollab}', 'Active',
        true, 0,

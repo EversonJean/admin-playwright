@@ -36,5 +36,8 @@
     "@types/node": "^22.10.5",
     "dotenv": "^16.4.7",
     "typescript": "~5.6.3"
+  },
+  "dependencies": {
+    "otplib": "^13.4.0"
   }
 }

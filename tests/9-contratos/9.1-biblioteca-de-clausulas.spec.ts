@@ -21,25 +21,41 @@ test.describe('Fluxo 9.1 — Biblioteca de cláusulas', () => {
     await authPage.goto('/app/clauses/new');
     await authPage.getByTestId('clause-form-title').fill(titulo);
 
-    // Categoria — pega a primeira opção do mat-select
-    await authPage.getByTestId('clause-form-category').click();
-    await authPage.locator('mat-option').first().click();
+    // mat-select: focus + Enter abre painel; ArrowDown + Enter seleciona
+    // primeira opcao. Evita click() que mat-label intercepta.
+    const category = authPage.getByTestId('clause-form-category');
+    await category.focus();
+    await authPage.keyboard.press('Enter');
+    await authPage.locator('mat-option:not([aria-disabled="true"])').first().waitFor({ state: 'visible' });
+    await authPage.locator('mat-option:not([aria-disabled="true"])').first().click();
 
-    // Aplicável a (multi-select) — pega a primeira opção e fecha o painel
-    await authPage.getByTestId('clause-form-applicability').click();
-    await authPage.locator('mat-option').first().click();
+    // Multi-select aplicabilidade
+    const applic = authPage.getByTestId('clause-form-applicability');
+    await applic.focus();
+    await authPage.keyboard.press('Enter');
+    await authPage.locator('mat-option:not([aria-disabled="true"])').first().waitFor({ state: 'visible' });
+    await authPage.locator('mat-option:not([aria-disabled="true"])').first().click();
     await authPage.keyboard.press('Escape');
 
-    // Corpo da cláusula — contenteditable
+    // Corpo (contenteditable)
     const editor = authPage.getByTestId('clause-editor-editor');
     await editor.click();
     await authPage.keyboard.type(
       'Corpo da cláusula de teste E2E. Sujeito a {evento.data}.',
     );
 
-    await authPage.getByTestId('clause-form-submit').click();
+    // Submit + espera a chamada POST terminar (200/201) antes de validar
+    const [postResp] = await Promise.all([
+      authPage.waitForResponse(
+        (r) => r.url().endsWith('/api/clauses') && r.request().method() === 'POST',
+        { timeout: 10_000 },
+      ),
+      authPage.getByTestId('clause-form-submit').click(),
+    ]);
+    expect(postResp.status(), 'POST /api/clauses deve retornar 2xx').toBeLessThan(300);
     await authPage.waitForURL(/\/app\/clauses(\/|$)/, { timeout: 10_000 });
 
+    // GET lista clausulas — back deve devolver a recem-criada
     const res = await authApi.get('/api/clauses');
     expect(res.ok()).toBe(true);
     const body = await res.json();
