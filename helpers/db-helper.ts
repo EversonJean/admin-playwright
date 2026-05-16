@@ -111,6 +111,43 @@ export function seedApprovedWhatsAppTemplateDirect(input: {
 }
 
 /**
+ * Cria User com role=CollaboratorPortal vinculado a um Collaborator
+ * existente, reusando o PasswordHash do `superadmin@dev.local` (senha
+ * "Dev12345!"). Devolve email+senha pra login subsequente em portal.
+ */
+export function seedCollaboratorPortalUserDirect(input: {
+  tenantId: string;
+  collaboratorId: string;
+  emailPrefix?: string;
+}): { email: string; password: string } {
+  const safeTenant = input.tenantId.replace(/'/g, "''");
+  const safeCollab = input.collaboratorId.replace(/'/g, "''");
+  const email = `${input.emailPrefix ?? 'portal'}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@e2e.test`;
+  const safeEmail = email.replace(/'/g, "''");
+  const hash = execSql(
+    `SELECT "PasswordHash" FROM "Users" WHERE "Email" = 'superadmin@dev.local';`,
+  );
+  if (!hash) {
+    throw new Error('superadmin@dev.local nao seedado — rode npm run db:reset');
+  }
+  const safeHash = hash.replace(/'/g, "''");
+  execSql(`
+    INSERT INTO "Users"
+      ("Id", "TenantId", "Type", "Email", "PasswordHash", "Name",
+       "Role", "CollaboratorId", "Status",
+       "HasPasswordCredential", "FailedLoginAttempts",
+       "CreatedAt", "UpdatedAt", "IsDeleted")
+    VALUES
+      (gen_random_uuid(), '${safeTenant}', 'Tenant', '${safeEmail}',
+       '${safeHash}', 'Portal User',
+       'CollaboratorPortal', '${safeCollab}', 'Active',
+       true, 0,
+       now(), now(), false);
+  `);
+  return { email, password: 'Dev12345!' };
+}
+
+/**
  * Le o `FormPublicToken` do Event direto do DB. Nao eh exposto no
  * EventDetailDto por padrao (Etapa 55 — token publico nao volta em
  * /api/events/:id); aqui pegamos via SQL pra exercitar o endpoint
