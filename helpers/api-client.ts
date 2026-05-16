@@ -90,9 +90,11 @@ export async function loginViaApi(
     throw new Error(`Login falhou (${res.status()}): ${await res.text()}`);
   }
   const body = await res.json();
+  // Backend envelopa em Result: { isError, data: {...}, errors }
+  const payload = body.data ?? body;
   return {
-    accessToken: body.accessToken ?? body.token,
-    refreshToken: body.refreshToken,
+    accessToken: payload.accessToken ?? payload.token,
+    refreshToken: payload.refreshToken,
   };
 }
 
