@@ -254,6 +254,8 @@ export const fakeAsaas = {
       status?: string;
       description?: string;
     };
+    /** Mesmo eventId em 2 triggers exercita idempotencia do processor. */
+    eventId?: string;
     accessToken?: string;
   }) => triggerWebhook('asaas', body),
 };

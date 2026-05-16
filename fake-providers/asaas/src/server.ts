@@ -121,6 +121,10 @@ await createFakeServer({
         status?: string;
         description?: string;
       };
+      /** Override do eventId (id do webhook). Quando omitido, gera novo a cada
+       * chamada. Usar valor fixo entre 2 triggers permite testar idempotencia
+       * do processor do back (mesmo evt_id nao deve duplicar efeito). */
+      eventId?: string;
       /** URL do back pra disparar (default https://localhost:1501/api/webhooks/asaas) */
       backUrl?: string;
       /** asaas-access-token quando o back valida (config WebhookToken) */
@@ -151,7 +155,8 @@ await createFakeServer({
         });
       }
 
-      const eventId = `fake_evt_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+      const eventId =
+        body.eventId ?? `fake_evt_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
       const payload = {
         id: eventId,
         event: body.event,
