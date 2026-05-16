@@ -3,6 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "description": "Testes E2E (Playwright) do Recreativo 2 — cobre fluxos front + back end-to-end.",
+  "workspaces": [
+    "fake-providers/shared",
+    "fake-providers/asaas",
+    "fake-providers/clicksign",
+    "fake-providers/whatsapp-meta",
+    "fake-providers/email",
+    "fake-providers/openai",
+    "fake-providers/anthropic",
+    "fake-providers/google-maps"
+  ],
   "scripts": {
     "install:browsers": "playwright install --with-deps chromium",
     "test": "playwright test",
@@ -12,7 +22,14 @@
     "test:smoke": "playwright test --grep @smoke",
     "report": "playwright show-report",
     "codegen": "playwright codegen http://localhost:4200",
-    "db:reset": "node scripts/db-reset.js"
+    "db:reset": "node scripts/db-reset.js",
+    "fakes:asaas": "npm run start -w fake-providers/asaas",
+    "fakes:clicksign": "npm run start -w fake-providers/clicksign",
+    "fakes:whatsapp": "npm run start -w fake-providers/whatsapp-meta",
+    "fakes:email": "npm run start -w fake-providers/email",
+    "fakes:openai": "npm run start -w fake-providers/openai",
+    "fakes:anthropic": "npm run start -w fake-providers/anthropic",
+    "fakes:maps": "npm run start -w fake-providers/google-maps"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",

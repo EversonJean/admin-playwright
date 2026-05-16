@@ -6,3 +6,5 @@ playwright/.cache/
 .env
 .env.local
 *.log
+fake-providers/**/dist/
+fake-providers/**/*.tsbuildinfo
