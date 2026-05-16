@@ -80,6 +80,37 @@ export function enableFeatureFlagDirect(tenantId: string, entitlementKey: string
 }
 
 /**
+ * Cria um WhatsAppTemplate Approved direto no banco — necessario pros
+ * specs de outbound (11.2) ja que templates sao cross-tenant gerenciados
+ * por SuperAdmin, e o fixture `tenant` so cria admin de tenant. Devolve
+ * o Id pra spec usar no POST /api/whatsapp/outbound/send.
+ *
+ * MetaTemplateId fica `meta_tmpl_<id>` — o fake WhatsApp tambem auto-cria
+ * com Approved no GET, entao o sync nao quebra.
+ */
+export function seedApprovedWhatsAppTemplateDirect(input: {
+  name: string;
+  body: string;
+  category?: 'Utility' | 'Authentication' | 'Marketing';
+  language?: string;
+}): string {
+  const id = execSql(`SELECT gen_random_uuid()::text;`);
+  const safeName = input.name.replace(/'/g, "''");
+  const safeBody = input.body.replace(/'/g, "''");
+  const safeCat = (input.category ?? 'Utility').replace(/'/g, "''");
+  const safeLang = (input.language ?? 'pt_BR').replace(/'/g, "''");
+  execSql(`
+    INSERT INTO "WhatsAppTemplates"
+      ("Id", "Name", "Language", "Category", "Status", "Body",
+       "MetaTemplateId", "CreatedAt", "UpdatedAt", "IsDeleted")
+    VALUES
+      ('${id}', '${safeName}', '${safeLang}', '${safeCat}', 'Approved',
+       '${safeBody}', 'meta_tmpl_${id}', now(), now(), false);
+  `);
+  return id;
+}
+
+/**
  * Conta tenants — útil pra smoke tests de "API está respondendo e DB tem dados".
  */
 export function countTenants(): number {

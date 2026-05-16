@@ -77,6 +77,53 @@ async function triggerWebhook<T>(provider: FakeProvider, body: T): Promise<{ bac
   }
 }
 
+// ─── WhatsApp Meta ──────────────────────────────────────────────────────────
+
+export const fakeWhatsApp = {
+  baseUrl: URLS.whatsapp,
+  inbox: (filter?: { tenantId?: string; path?: string; since?: string }) =>
+    fetchInbox('whatsapp', filter),
+  clear: () => clearInbox('whatsapp'),
+  resetState: async (): Promise<void> => {
+    const api = await ctx();
+    try {
+      await api.delete(`${URLS.whatsapp}/_control/state`);
+    } finally {
+      await api.dispose();
+    }
+  },
+  /**
+   * Pre-cadastra um template no fake com status especifico — usado pra
+   * cobrir cenarios de Rejected/Paused (GET /:id devolve esse status em
+   * vez de auto-criar como Approved).
+   */
+  seedTemplate: async (input: {
+    id: string;
+    name: string;
+    status: 'APPROVED' | 'PENDING' | 'REJECTED' | 'PAUSED';
+    rejectedReason?: string;
+  }) => {
+    const api = await ctx();
+    try {
+      await api.post(`${URLS.whatsapp}/_control/template`, { data: input });
+    } finally {
+      await api.dispose();
+    }
+  },
+  /**
+   * Dispara webhook do WhatsApp (status update ou inbound) com HMAC
+   * SHA-256 calculado a partir do WebhookAppSecret. POSTa em
+   * /api/webhooks/whatsapp com header X-Hub-Signature-256.
+   */
+  triggerWebhook: (body: {
+    kind: 'status' | 'inbound';
+    phone: string;
+    messageId?: string;
+    status?: 'sent' | 'delivered' | 'read' | 'failed';
+    text?: string;
+  }) => triggerWebhook('whatsapp', body),
+};
+
 // ─── ClickSign ──────────────────────────────────────────────────────────────
 
 export const fakeClicksign = {
