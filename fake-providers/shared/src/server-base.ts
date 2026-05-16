@@ -135,7 +135,7 @@ export async function createFakeServer(
  * precisam disparar callback pro back. Cada provider passa um `buildRequest`
  * que recebe o body do controle e devolve `{ url, payload, headers }` final.
  */
-export function registerTriggerWebhook<TBody>(
+export function registerTriggerWebhook<TBody = unknown>(
   app: FastifyInstance,
   dispatcher: WebhookDispatcher,
   buildRequest: (body: TBody) => {
@@ -144,15 +144,25 @@ export function registerTriggerWebhook<TBody>(
     headers?: Record<string, string>;
   },
 ): void {
-  app.post<{ Body: TBody }>('/_control/trigger-webhook', async (req, reply) => {
-    const built = buildRequest(req.body);
-    const result = await dispatcher.send({
-      url: built.url,
-      payload: built.payload,
-      headers: built.headers,
-    });
-    reply.status(result.status >= 200 && result.status < 300 ? 200 : 502);
-    return { dispatched: true, backStatus: result.status, backBody: result.body };
+  app.post('/_control/trigger-webhook', async (req, reply) => {
+    const built = buildRequest(req.body as TBody);
+    try {
+      const result = await dispatcher.send({
+        url: built.url,
+        payload: built.payload,
+        headers: built.headers,
+      });
+      // Sempre 200 quando o dispatch foi feito — o status do back vai no body.
+      // Spec inspeciona `backStatus` (200/401/422/etc) pra validar comportamento.
+      reply.status(200);
+      return { dispatched: true, backStatus: result.status, backBody: result.body };
+    } catch (err) {
+      reply.status(502);
+      return {
+        dispatched: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
   });
 }
 

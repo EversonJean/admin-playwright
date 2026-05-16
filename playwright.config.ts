@@ -53,6 +53,16 @@ export default defineConfig({
   webServer: SKIP_WEBSERVER
     ? undefined
     : [
+        // Fake providers — sobem ANTES do back porque o back resolve BaseUrl
+        // deles no startup (HttpClient factory). reuseExistingServer permite
+        // rodar specs sucessivos sem reinicializar tudo em dev.
+        {
+          name: 'fake-asaas',
+          command: 'npm run fakes:asaas',
+          url: 'http://localhost:1510/_control/health',
+          timeout: 30_000,
+          reuseExistingServer: !process.env.CI,
+        },
         {
           name: 'admin-backend',
           // Profile `e2e` no launchSettings.json fixa ASPNETCORE_ENVIRONMENT=E2E
