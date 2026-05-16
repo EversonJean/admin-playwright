@@ -1,6 +1,7 @@
 import { expect } from '@playwright/test';
 import { authTest } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
+import { assertOk, readJson } from '../../helpers/response';
 
 /**
  * Telas misc do tenant sem cobertura dedicada:
@@ -38,11 +39,10 @@ authTest.describe('Telas misc (smoke + /api/auth/me)', () => {
     expect(res?.status() ?? 0).toBeLessThan(500);
   });
 
-  authTest('@crud GET /api/auth/me devolve dados do user logado', async ({ authApi, tenant }) => {
+  authTest('@flow GET /api/auth/me devolve dados do user logado', async ({ authApi, tenant }) => {
     const res = await authApi.get('/api/auth/me');
-    expect(res.ok()).toBe(true);
-    const body = await res.json();
-    const me = body.data ?? body;
+    await assertOk(res, 'GET /api/auth/me');
+    const me = await readJson<{ email: string; tenantId: string }>(res);
     expect(me.email.toLowerCase()).toBe(tenant.email.toLowerCase());
     expect(me.tenantId).toBe(tenant.tenantId);
   });

@@ -83,15 +83,27 @@ test.describe('Fluxo 16.3 — Cobrança Asaas', () => {
     });
     expect(confirmedRes.backStatus).toBe(200);
 
-    // 5. Re-lista e valida transicao
-    const listed2 = await authApi.get('/api/billing/invoices');
-    expect(listed2.ok()).toBe(true);
-    const body2 = await listed2.json();
-    const items2 = body2.data?.items ?? body2.items ?? body2.data ?? body2;
-    const arr2 = Array.isArray(items2) ? items2 : items2.items ?? [];
-    const final = arr2.find((i: { id: string }) => i.id === invoice!.id);
-    expect(final, 'Invoice deve permanecer visivel apos PAYMENT_CONFIRMED').toBeTruthy();
-    expect(final!.status, 'Invoice deve estar Paid apos webhook CONFIRMED').toBe('Paid');
+    // 5. Polling pra eliminar race: webhook eh processado async no back;
+    //    re-lista invoice ate status virar Paid (ou estoura timeout de 5s).
+    await expect
+      .poll(
+        async () => {
+          const r = await authApi.get('/api/billing/invoices');
+          const b = await r.json();
+          const items = (b.data?.items ?? b.items ?? b.data ?? b) as Array<{
+            id: string;
+            status: string;
+          }>;
+          const arr = Array.isArray(items) ? items : [];
+          return arr.find((i) => i.id === invoice!.id)?.status;
+        },
+        {
+          message: 'Invoice deve transicionar pra Paid apos webhook CONFIRMED',
+          timeout: 5_000,
+          intervals: [200, 300, 500],
+        },
+      )
+      .toBe('Paid');
   });
 
   test('@crud back faz HTTP real pro fake quando webhook chega sem invoice', async ({

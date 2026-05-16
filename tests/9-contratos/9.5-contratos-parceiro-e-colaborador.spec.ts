@@ -34,12 +34,17 @@ test.describe('Fluxo 9.5 — Contratos parceiro e colaborador', () => {
       document: '11222333000181', // CNPJ válido
     });
 
+    // Aguarda GET de clientes resolver ANTES de abrir o select pra evitar
+    // pegar mat-option de painel anterior aberto / lista vazia.
+    const clientsLoadedPromise = authPage.waitForResponse(
+      (r) => r.url().includes('/api/clients') && r.request().method() === 'GET',
+      { timeout: 10_000 },
+    );
     await authPage.goto('/app/contracts/partner/new');
-    // mat-label flutua sobre o trigger e intercepta cliques — usa keyboard
-    // pra abrir e selecionar o primeiro item.
+    await clientsLoadedPromise;
+    // mat-label flutua sobre o trigger e intercepta cliques — usa keyboard.
     const partnerSelect = authPage.getByTestId('partner-contract-form-partnerId');
     await expect(partnerSelect).toBeVisible();
-    await authPage.waitForTimeout(800); // deixa o GET /api/clients?type=PJ resolver
     await partnerSelect.focus();
     await authPage.keyboard.press('Enter');
     await authPage.locator('mat-option:not([aria-disabled="true"])').first().click();
@@ -69,10 +74,14 @@ test.describe('Fluxo 9.5 — Contratos parceiro e colaborador', () => {
   }) => {
     await apiCreateCollaborator(authApi);
 
+    const collabsLoadedPromise = authPage.waitForResponse(
+      (r) => r.url().includes('/api/collaborators') && r.request().method() === 'GET',
+      { timeout: 10_000 },
+    );
     await authPage.goto('/app/contracts/collaborator/new');
+    await collabsLoadedPromise;
     const collabSelect = authPage.getByTestId('collaborator-contract-form-collaboratorId');
     await expect(collabSelect).toBeVisible();
-    await authPage.waitForTimeout(800);
     await collabSelect.focus();
     await authPage.keyboard.press('Enter');
     await authPage.locator('mat-option:not([aria-disabled="true"])').first().click();

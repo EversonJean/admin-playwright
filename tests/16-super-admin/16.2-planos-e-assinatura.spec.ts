@@ -1,6 +1,7 @@
 import { authTest as test } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
 import { superAdminTest, expect } from '../../fixtures/super-admin.fixture';
+import { assertOk, readJson, unwrapList } from '../../helpers/response';
 
 /**
  * Fluxo: 16.2 — Planos e assinatura
@@ -16,22 +17,21 @@ test.describe('Fluxo 16.2 — Planos e assinatura (tenant view)', () => {
     await smokeRoute(authPage, '/app/billing/plans');
   });
 
-  test('@crud GET /api/billing/plans devolve catalogo publico', async ({ authApi }) => {
+  test('@flow GET /api/billing/plans devolve catalogo publico', async ({ authApi }) => {
     const res = await authApi.get('/api/billing/plans');
-    expect(res.ok()).toBe(true);
-    const body = await res.json();
-    const arr: Array<{ code: string }> = body.data ?? body;
+    await assertOk(res, 'GET /api/billing/plans');
+    const arr = await readJson<Array<{ code: string }>>(res);
     expect(Array.isArray(arr)).toBe(true);
     expect(arr.length).toBeGreaterThanOrEqual(1);
+    expect(arr[0]!.code).toBeTruthy();
   });
 });
 
 superAdminTest.describe('Fluxo 16.2 — Planos (SuperAdmin CRUD)', () => {
-  superAdminTest('@crud GET /api/super-admin/plans lista catalogo', async ({ superAdminApi }) => {
+  superAdminTest('@flow GET /api/super-admin/plans lista catalogo', async ({ superAdminApi }) => {
     const res = await superAdminApi.get('/api/super-admin/plans');
-    expect(res.ok()).toBe(true);
-    const body = await res.json();
-    const arr: Array<{ code: string }> = body.data?.items ?? body.data ?? body;
-    expect(Array.isArray(arr) ? arr : []).toBeTruthy();
+    await assertOk(res, 'GET /api/super-admin/plans');
+    const arr = await unwrapList<{ code: string }>(res);
+    expect(arr.length, 'seed do back deve ter ao menos 1 plano').toBeGreaterThanOrEqual(1);
   });
 });

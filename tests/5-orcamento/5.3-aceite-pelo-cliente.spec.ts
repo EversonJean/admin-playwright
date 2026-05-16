@@ -57,7 +57,7 @@ test.describe('Fluxo 5.3 — Aceite pelo cliente', () => {
     expect(after.status).toBe('Accepted');
   });
 
-  test('@crud token invalido devolve 404 sem vazar info', async () => {
+  test('@flow token invalido devolve 404 sem vazar info', async () => {
     const publicApi = await createPublicApiContext();
     try {
       const r = await apiTryAcceptPublicBudget(publicApi, 'token-fake-inexistente');

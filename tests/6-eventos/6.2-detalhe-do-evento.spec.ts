@@ -1,14 +1,8 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
-import { apiCreateActivity, apiCreateClient } from '../../helpers/api-entities';
-import {
-  apiAcceptPublicBudget,
-  apiCreateBudget,
-  apiGetEvent,
-  apiSendBudget,
-  createPublicApiContext,
-  extractTokenFromPublicUrl,
-} from '../../helpers/api-event-flow';
+import { apiGetEvent } from '../../helpers/api-event-flow';
+import { setupAcceptedEvent } from '../../helpers/setup-flows';
+import type { EventDTO } from '../../helpers/types';
 
 /**
  * Fluxo: 6.2 — Detalhe do evento
@@ -21,43 +15,26 @@ test.describe('Fluxo 6.2 — Detalhe do evento', () => {
   });
 
   test('@crud GET /api/events/:id devolve detalhes completos pos-aceite', async ({ authApi }) => {
-    const cliente = await apiCreateClient(authApi);
-    const atividade = await apiCreateActivity(authApi);
-    const orcamento = await apiCreateBudget(authApi, {
-      clientId: cliente.id,
-      activityIds: [atividade.id],
-    });
-    const sent = await apiSendBudget(authApi, orcamento.id);
-    const token = extractTokenFromPublicUrl(sent.publicUrl);
+    const { eventId, clienteId } = await setupAcceptedEvent(authApi);
 
-    const publicApi = await createPublicApiContext();
-    let eventId: string;
-    try {
-      const aceito = await apiAcceptPublicBudget(publicApi, token);
-      eventId = aceito.eventId;
-    } finally {
-      await publicApi.dispose();
-    }
-
-    const ev = (await apiGetEvent(authApi, eventId)) as unknown as {
-      id: string;
-      clientId?: string;
-      clientName?: string;
-      teamSize: number;
-      pricingItems?: Array<{ activityId?: string; quantity: number }>;
-      total: number;
-      status: string;
-    };
+    const ev = (await apiGetEvent(authApi, eventId)) as unknown as Pick<
+      EventDTO,
+      'id' | 'clientId' | 'clientName' | 'teamSize' | 'pricingItems' | 'total' | 'status'
+    >;
     expect(ev.id).toBe(eventId);
-    expect(ev.clientId).toBe(cliente.id);
+    expect(ev.clientId).toBe(clienteId);
     expect(ev.clientName).toBeTruthy();
     expect(ev.teamSize).toBeGreaterThanOrEqual(0);
     expect(ev.pricingItems?.length).toBeGreaterThanOrEqual(1);
     expect(ev.total).toBeGreaterThan(0);
   });
 
-  test('@crud GET evento inexistente devolve 404', async ({ authApi }) => {
-    const r = await authApi.get('/api/events/00000000-0000-0000-0000-000000000000');
-    expect([400, 404]).toContain(r.status());
+  test('@crud GET evento inexistente devolve 400 ou 404 (sem 5xx)', async ({ authApi }) => {
+    // Back atual devolve 400 (validacao do route param) pra guid que nao
+    // corresponde a evento do tenant. Aceita 400 ou 404 — fica documentado
+    // que ambos sao OK desde que nao vaze 5xx nem 200.
+    const randomGuid = '11111111-2222-3333-4444-555555555555';
+    const r = await authApi.get(`/api/events/${randomGuid}`);
+    expect([400, 404], `status: ${r.status()}`).toContain(r.status());
   });
 });

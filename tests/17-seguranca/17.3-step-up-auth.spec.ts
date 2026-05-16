@@ -1,4 +1,5 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
+import { assertOk, readJson } from '../../helpers/response';
 
 /**
  * Fluxo: 17.3 — Step-up auth
@@ -9,29 +10,27 @@ import { authTest as test, expect } from '../../fixtures/auth.fixture';
  */
 
 test.describe('Fluxo 17.3 — Step-up auth', () => {
-  test('@flow POST /api/auth/step-up sem body responde 4xx (não 500)', async ({ authApi }) => {
+  test('@flow POST /api/auth/step-up sem body devolve 400/422', async ({ authApi }) => {
     const res = await authApi.post('/api/auth/step-up', { data: {} });
-    expect(res.status()).toBeLessThan(500);
+    expect([400, 422], `status: ${res.status()}`).toContain(res.status());
   });
 
   test('@crud step-up com senha correta devolve stepUpToken', async ({ authApi, tenant }) => {
     const res = await authApi.post('/api/auth/step-up', {
       data: { method: 'Password', password: tenant.password },
     });
-    if (!res.ok()) {
-      // Pode estar com shape diferente; aceita 200 OK ou 4xx informativo
-      expect([200, 400, 401], `status: ${res.status()}`).toContain(res.status());
-      return;
-    }
-    const body = await res.json();
-    const data = body.data ?? body;
-    expect(data.stepUpToken ?? data.token, 'deveria devolver token').toBeTruthy();
+    await assertOk(res, 'POST step-up senha correta');
+    const data = await readJson<{ stepUpToken?: string; token?: string }>(res);
+    const token = data.stepUpToken ?? data.token;
+    expect(token, 'deveria devolver stepUpToken').toBeTruthy();
+    expect(typeof token).toBe('string');
+    expect((token ?? '').length).toBeGreaterThan(10);
   });
 
   test('@crud step-up com senha errada devolve 401', async ({ authApi }) => {
     const res = await authApi.post('/api/auth/step-up', {
       data: { method: 'Password', password: 'senha-errada-12345' },
     });
-    expect([400, 401, 403]).toContain(res.status());
+    expect(res.status(), 'senha errada deve ser 401 estrito').toBe(401);
   });
 });

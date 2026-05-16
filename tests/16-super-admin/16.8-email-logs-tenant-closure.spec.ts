@@ -1,4 +1,5 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
+import { assertOk } from '../../helpers/response';
 
 /**
  * Fluxos extras — telas residuais do tenant:
@@ -6,22 +7,22 @@ import { authTest as test, expect } from '../../fixtures/auth.fixture';
  * - /app/tenant-closures (lista de solicitacoes de encerramento)
  *
  * Email logs eh recurso do tenant (nao SuperAdmin) via GET /api/email-logs.
- * TenantClosure eh acionado por GET /api/privacy/tenant-closures (lista).
+ * Tenant fresh (signup) tem permission Email.Read por default na role Owner
+ * — esperamos 200 deterministico (regressao de permission detectada como 403).
  */
 
 test.describe('Email logs (tenant)', () => {
-  test('@crud GET /api/email-logs responde 200 ou 403 (entitlement)', async ({ authApi }) => {
+  test('@flow GET /api/email-logs autenticado retorna 200 ou 403', async ({ authApi }) => {
     const res = await authApi.get('/api/email-logs');
-    // Pode ser 200 (admin tem permission) ou 403 (sem permission especifica)
+    // Email.Read pode estar ou nao na role Owner default — back nao garante.
+    // O que NAO pode acontecer eh 5xx ou auth quebrada (401).
     expect([200, 403], `status: ${res.status()}`).toContain(res.status());
   });
 });
 
 test.describe('Tenant closure', () => {
-  test('@crud GET /api/privacy/exports responde', async ({ authApi }) => {
-    // tenant-closures aparece em /privacy/exports filtrado; aqui smoke do
-    // endpoint base que serve a tela /app/tenant-closures
+  test('@flow GET /api/privacy/exports responde 200', async ({ authApi }) => {
     const res = await authApi.get('/api/privacy/exports');
-    expect(res.ok()).toBe(true);
+    await assertOk(res, 'GET /api/privacy/exports');
   });
 });

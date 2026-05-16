@@ -18,22 +18,13 @@ import { fakeEmail } from '../../helpers/fake-providers';
  */
 
 base.describe('Fluxo 11.1 — Email', () => {
-  base('@flow GET /api/email-logs responde sem 500', async () => {
-    const api = await createApiContext();
-    try {
-      const fake = fakeTenant();
-      await api.post('/api/auth/signup', {
-        data: {
-          companyName: fake.companyName,
-          userName: fake.adminName,
-          email: fake.adminEmail,
-          password: fake.adminPassword,
-        },
-      });
-    } finally {
-      await api.dispose();
-    }
-  });
+  authTest(
+    '@flow GET /api/email-logs autenticado retorna 200/403 (sem 500)',
+    async ({ authApi }) => {
+      const res = await authApi.get('/api/email-logs');
+      expect([200, 403], `status: ${res.status()}`).toContain(res.status());
+    },
+  );
 
   base('@flow signup faz HTTP real pro fake email com Bearer e subject de verificacao', async () => {
     const since = new Date().toISOString();

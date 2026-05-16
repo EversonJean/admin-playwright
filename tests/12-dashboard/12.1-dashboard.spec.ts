@@ -1,5 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
+import { assertOk, readJson } from '../../helpers/response';
 
 /**
  * Fluxo: 12.1 — Dashboard
@@ -11,15 +12,15 @@ test.describe('Fluxo 12.1 — Dashboard', () => {
     await smokeRoute(authPage, '/app/dashboard');
   });
 
-  test('@crud GET /api/dashboard/metrics retorna agregados zerados em tenant novo', async ({
+  test('@flow GET /api/dashboard/metrics retorna estrutura em tenant novo', async ({
     authApi,
   }) => {
     const res = await authApi.get('/api/dashboard/metrics');
-    expect(res.ok()).toBe(true);
-    const body = await res.json();
-    const data = body.data ?? body;
-    expect(data).toBeTruthy();
-    // Tenant recem-criado nao tem eventos/orcamentos; basta a estrutura existir
+    await assertOk(res, 'GET /api/dashboard/metrics');
+    const data = await readJson<Record<string, unknown>>(res);
     expect(typeof data).toBe('object');
+    expect(data).not.toBeNull();
+    // Pelo menos uma chave conhecida deve existir (smoke do shape)
+    expect(Object.keys(data).length).toBeGreaterThan(0);
   });
 });

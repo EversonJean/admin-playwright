@@ -94,7 +94,7 @@ test.describe('Auth flows extras (API)', () => {
     }
   });
 
-  test('@crud magic-link request responde 200 e nao vaza se email existe', async () => {
+  test('@flow magic-link request responde 200 e nao vaza se email existe', async () => {
     const api = await createApiContext();
     try {
       const r = await api.post('/api/auth/magic-link', {
@@ -107,7 +107,7 @@ test.describe('Auth flows extras (API)', () => {
     }
   });
 
-  test('@crud reset-password com token invalido devolve 400/401', async () => {
+  test('@flow reset-password com token invalido devolve 400/401', async () => {
     const api = await createApiContext();
     try {
       const r = await api.post('/api/auth/reset-password', {

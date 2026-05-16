@@ -63,7 +63,14 @@ test.describe('Fluxo 1.1 — Signup pela UI', () => {
     await page.getByTestId('signup-terms').locator('input[type="checkbox"]').check({ force: true });
     await page.getByTestId('signup-submit').click();
 
-    await page.waitForTimeout(1500);
+    // Validacao client-side bloqueia o POST quando senhas divergem; afirmamos
+    // ausencia de chamada (300ms eh suficiente p/ Angular processar o (click)).
+    let signupCalled = false;
+    page.on('request', (req) => {
+      if (req.url().includes('/api/auth/signup') && req.method() === 'POST') signupCalled = true;
+    });
+    await page.waitForTimeout(300);
+    expect(signupCalled, 'submit nao deveria disparar POST signup').toBe(false);
     expect(page.url()).toMatch(/\/auth\/signup$/);
   });
 
@@ -115,9 +122,14 @@ tenantTest.describe('Fluxo 1.1 — Login pós-signup', () => {
     await page.goto('/auth/login');
     await page.getByTestId('login-email').fill(tenant.email);
     await page.getByTestId('login-password').fill('Senha@Errada123');
-    await page.getByTestId('login-submit').click();
 
-    await page.waitForTimeout(2000);
+    const loginRespPromise = page.waitForResponse(
+      (r) => r.url().includes('/api/auth/login') && r.request().method() === 'POST',
+      { timeout: 10_000 },
+    );
+    await page.getByTestId('login-submit').click();
+    const loginResp = await loginRespPromise;
+    expect(loginResp.status(), 'senha errada -> 401').toBe(401);
     expect(page.url()).toMatch(/\/auth\/login/);
   });
 });

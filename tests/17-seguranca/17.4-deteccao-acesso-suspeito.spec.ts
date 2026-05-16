@@ -1,5 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { createApiContext } from '../../helpers/api-client';
+import { assertOk, unwrapList } from '../../helpers/response';
 
 /**
  * Fluxo: 17.4 — Detecção de acesso suspeito
@@ -9,10 +10,15 @@ import { createApiContext } from '../../helpers/api-client';
  * security-events lista os eventos do tenant.
  */
 
+interface SecurityEventItem {
+  type?: string;
+  eventType?: string;
+}
+
 test.describe('Fluxo 17.4 — Detecção de acesso suspeito', () => {
-  test('@flow GET /api/auth/security-events responde sem 500', async ({ authApi }) => {
+  test('@flow GET /api/auth/security-events autenticado retorna 200', async ({ authApi }) => {
     const res = await authApi.get('/api/auth/security-events');
-    expect(res.status()).toBeLessThan(500);
+    expect(res.status()).toBe(200);
   });
 
   test('@crud falha de login + GET security-events lista evento LoginFailed', async ({
@@ -30,17 +36,14 @@ test.describe('Fluxo 17.4 — Detecção de acesso suspeito', () => {
     }
 
     const res = await authApi.get('/api/auth/security-events');
-    expect(res.ok()).toBe(true);
-    const body = await res.json();
-    const items: Array<{ type?: string; eventType?: string }> =
-      body.data?.items ?? body.items ?? body.data ?? body;
-    const arr = Array.isArray(items) ? items : [];
-    const hasFailedLogin = arr.some((e) =>
+    await assertOk(res, 'GET security-events');
+    const items = await unwrapList<SecurityEventItem>(res);
+    const hasFailedLogin = items.some((e) =>
       (e.type ?? e.eventType ?? '').toLowerCase().includes('loginfailed'),
     );
     expect(
-      hasFailedLogin || arr.length > 0,
-      'apos login falho deve haver pelo menos 1 SecurityEvent',
+      hasFailedLogin,
+      'apos login falho deve haver SecurityEvent com type LoginFailed (e nao qualquer evento)',
     ).toBe(true);
   });
 });

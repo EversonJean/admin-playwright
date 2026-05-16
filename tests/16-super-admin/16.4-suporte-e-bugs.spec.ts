@@ -1,6 +1,7 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
 import { superAdminTest } from '../../fixtures/super-admin.fixture';
+import { assertOk, readJson, unwrapList } from '../../helpers/response';
 
 /**
  * Fluxo: 16.4 — Suporte e bug tracking
@@ -47,16 +48,20 @@ test.describe('Fluxo 16.4 — Suporte e bugs (tenant)', () => {
 });
 
 superAdminTest.describe('Fluxo 16.4 — Suporte e bugs (SuperAdmin triagem)', () => {
-  superAdminTest('@crud GET /api/super-admin/bugs lista cross-tenant', async ({ superAdminApi }) => {
+  superAdminTest('@flow GET /api/super-admin/bugs lista cross-tenant', async ({ superAdminApi }) => {
     const res = await superAdminApi.get('/api/super-admin/bugs');
-    expect(res.ok()).toBe(true);
-    const body = await res.json();
-    const arr: Array<unknown> = body.data?.items ?? body.items ?? body.data ?? body;
-    expect(Array.isArray(arr) ? arr.length : 0).toBeGreaterThanOrEqual(0);
+    await assertOk(res, 'GET /api/super-admin/bugs');
+    const arr = await unwrapList<{ id: string }>(res);
+    // Suite pode ter criado bugs em runs anteriores; pelo menos array valido
+    expect(Array.isArray(arr)).toBe(true);
   });
 
-  superAdminTest('@crud GET /api/super-admin/bugs/summary devolve agregados', async ({ superAdminApi }) => {
+  superAdminTest('@flow GET /api/super-admin/bugs/summary devolve shape minimo', async ({ superAdminApi }) => {
     const res = await superAdminApi.get('/api/super-admin/bugs/summary');
-    expect(res.ok()).toBe(true);
+    await assertOk(res, 'GET /api/super-admin/bugs/summary');
+    const data = await readJson<Record<string, unknown>>(res);
+    expect(typeof data).toBe('object');
+    expect(data).not.toBeNull();
+    expect(Object.keys(data).length).toBeGreaterThan(0);
   });
 });

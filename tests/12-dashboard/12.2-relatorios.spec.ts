@@ -1,4 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
+import { smokeRoute } from '../../helpers/smoke';
+import { assertOk, readJson } from '../../helpers/response';
 
 /**
  * Fluxo: 12.2 — Relatórios
@@ -7,16 +9,16 @@ import { authTest as test, expect } from '../../fixtures/auth.fixture';
 
 test.describe('Fluxo 12.2 — Relatórios', () => {
   test('@flow tela de relatórios financeiros carrega autenticada', async ({ authPage }) => {
-    const res = await authPage.goto('/app/finance/reports');
-    expect(res?.status() ?? 0).toBeLessThan(500);
+    await smokeRoute(authPage, '/app/finance/reports');
   });
 
-  test('@crud GET /api/reports/events com filtro de periodo responde', async ({ authApi }) => {
+  test('@flow GET /api/reports/events com filtro de periodo responde 200', async ({ authApi }) => {
     const from = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
     const to = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
     const res = await authApi.get(`/api/reports/events?from=${from}&to=${to}`);
-    expect(res.ok()).toBe(true);
-    const body = await res.json();
-    expect(body.data ?? body).toBeTruthy();
+    await assertOk(res, 'GET /api/reports/events');
+    const data = await readJson<Record<string, unknown>>(res);
+    expect(typeof data).toBe('object');
+    expect(data).not.toBeNull();
   });
 });

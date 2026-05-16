@@ -1,13 +1,9 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
-import { apiCreateActivity, apiCreateClient } from '../../helpers/api-entities';
-import {
-  apiAcceptPublicBudget,
-  apiCreateBudget,
-  apiSendBudget,
-  createPublicApiContext,
-  extractTokenFromPublicUrl,
-} from '../../helpers/api-event-flow';
+import { createPublicApiContext } from '../../helpers/api-event-flow';
 import { getEventFormPublicTokenDirect } from '../../helpers/db-helper';
+import { setupAcceptedEvent } from '../../helpers/setup-flows';
+import { assertOk, readJson } from '../../helpers/response';
+import { smokeRoute } from '../../helpers/smoke';
 
 /**
  * Fluxo: 6.5 — Formulário público pós-aceite
@@ -18,44 +14,33 @@ import { getEventFormPublicTokenDirect } from '../../helpers/db-helper';
  */
 
 test.describe('Fluxo 6.5 — Formulário público pós-aceite', () => {
-  test('@flow rota /event-form/:token responde sem 500', async ({ page }) => {
-    const res = await page.goto('/event-form/token-invalido-teste');
-    expect(res?.status() ?? 0).toBeLessThan(500);
+  test('@flow rota /event-form/:token carrega no front sem 5xx', async ({ page }) => {
+    // SPA Angular: rota com token invalido carrega shell + tela de erro.
+    await smokeRoute(page, '/event-form/token-invalido-teste');
   });
 
-  test('@crud GET /api/public/events/:token/form devolve dados do evento aceito', async ({
+  test('@crud GET /api/public/events/:token/form devolve payload do evento aceito', async ({
     authApi,
   }) => {
-    const cliente = await apiCreateClient(authApi);
-    const atividade = await apiCreateActivity(authApi);
-    const orcamento = await apiCreateBudget(authApi, {
-      clientId: cliente.id,
-      activityIds: [atividade.id],
-    });
-    const sent = await apiSendBudget(authApi, orcamento.id);
-    const token = extractTokenFromPublicUrl(sent.publicUrl);
-
-    const publicApi = await createPublicApiContext();
-    let eventId: string;
-    try {
-      const aceito = await apiAcceptPublicBudget(publicApi, token);
-      eventId = aceito.eventId;
-    } finally {
-      await publicApi.dispose();
-    }
-
+    const { eventId } = await setupAcceptedEvent(authApi);
     const formToken = getEventFormPublicTokenDirect(eventId);
     expect(formToken.length).toBeGreaterThan(10);
 
-    const publicApi2 = await createPublicApiContext();
+    const publicApi = await createPublicApiContext();
     try {
-      const res = await publicApi2.get(`/api/public/events/${formToken}/form`);
-      expect(res.ok()).toBe(true);
-      const body = await res.json();
-      const data = body.data ?? body;
-      expect(data, 'GET publico do form deve devolver payload').toBeTruthy();
+      const res = await publicApi.get(`/api/public/events/${formToken}/form`);
+      await assertOk(res, 'GET public form');
+      const data = await readJson<{
+        eventDate?: string;
+        startTime?: string;
+        endTime?: string;
+        clientName?: string;
+        fields?: unknown[];
+      }>(res);
+      // Valida shape minimo (nao so toBeTruthy).
+      expect(data.eventDate ?? data.startTime, 'payload publico deve ter campo de evento').toBeTruthy();
     } finally {
-      await publicApi2.dispose();
+      await publicApi.dispose();
     }
   });
 
