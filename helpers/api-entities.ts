@@ -26,10 +26,14 @@ export interface CreatedEntity {
 }
 
 /** POST /api/clients */
-export async function apiCreateClient(api: APIRequestContext, overrides: Partial<ReturnType<typeof fakeClient>> = {}): Promise<CreatedEntity> {
+export async function apiCreateClient(
+  api: APIRequestContext,
+  overrides: Partial<ReturnType<typeof fakeClient>> & { type?: 'PF' | 'PJ' } = {},
+): Promise<CreatedEntity> {
   const fake = { ...fakeClient(), ...overrides };
   const res = await api.post('/api/clients', {
     data: {
+      type: overrides.type ?? 'PF',
       name: fake.name,
       email: fake.email,
       phone: fake.phone,
