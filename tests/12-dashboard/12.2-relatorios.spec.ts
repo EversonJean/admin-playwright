@@ -10,4 +10,13 @@ test.describe('Fluxo 12.2 — Relatórios', () => {
     const res = await authPage.goto('/app/finance/reports');
     expect(res?.status() ?? 0).toBeLessThan(500);
   });
+
+  test('@crud GET /api/reports/events com filtro de periodo responde', async ({ authApi }) => {
+    const from = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const to = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+    const res = await authApi.get(`/api/reports/events?from=${from}&to=${to}`);
+    expect(res.ok()).toBe(true);
+    const body = await res.json();
+    expect(body.data ?? body).toBeTruthy();
+  });
 });
