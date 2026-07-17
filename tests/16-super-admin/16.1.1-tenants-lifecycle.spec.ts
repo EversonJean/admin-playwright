@@ -4,7 +4,8 @@ import { assertOk, unwrapList } from '../../helpers/response';
 
 /**
  * Aprofundamento de 16.1 — SuperAdmin lifecycle de tenants.
- * Endpoints cobertos: /suspend, /reactivate, /impersonate.
+ * Endpoints cobertos: /suspend, /reactivate.
+ * (/impersonate foi REMOVIDO — SEPARACAO-SUPER-ADMIN.md §4.0.)
  */
 
 superAdminTest.describe('16.1.1 — SuperAdmin lifecycle de tenants', () => {
@@ -30,7 +31,7 @@ superAdminTest.describe('16.1.1 — SuperAdmin lifecycle de tenants', () => {
     expect(reactRes.status(), `reactivate: ${reactRes.status()}`).toBeLessThan(500);
   });
 
-  superAdminTest('@crud POST /impersonate retorna 4xx sem step-up token', async ({
+  superAdminTest('@crud POST /impersonate não existe mais (removido no split)', async ({
     superAdminApi,
   }) => {
     const listRes = await superAdminApi.get('/api/super-admin/tenants');
@@ -38,9 +39,10 @@ superAdminTest.describe('16.1.1 — SuperAdmin lifecycle de tenants', () => {
     const target = tenants[0];
     if (!target) return;
 
-    // Impersonate exige step-up token (Etapa 86). Sem ele -> 400/401/403
+    // Funcionalidade removida por decisão de segurança
+    // (SEPARACAO-SUPER-ADMIN.md §4.0) — endpoint deve responder 404.
     const res = await superAdminApi.post(`/api/super-admin/tenants/${target.id}/impersonate`);
-    expect(res.status(), `impersonate sem step-up: ${res.status()}`).toBeLessThan(500);
+    expect(res.status(), `impersonate removido: ${res.status()}`).toBe(404);
   });
 });
 

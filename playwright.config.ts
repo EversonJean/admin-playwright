@@ -5,6 +5,9 @@ import * as path from 'path';
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 const FRONT_URL = process.env.FRONT_URL ?? 'http://localhost:4200';
+// Painel Super Admin — build/origem próprios desde SEPARACAO-SUPER-ADMIN.md
+// (project `super-admin` do workspace Angular, porta 4201 em dev).
+const SUPER_ADMIN_URL = process.env.SUPER_ADMIN_URL ?? 'http://localhost:4201';
 const BACK_URL = process.env.BACK_URL ?? 'https://localhost:1501';
 const SKIP_WEBSERVER = process.env.SKIP_WEBSERVER === 'true';
 
@@ -125,6 +128,14 @@ export default defineConfig({
           command: 'npm start',
           cwd: FRONT_PROJECT_PATH,
           url: FRONT_URL,
+          timeout: 180_000,
+          reuseExistingServer: !process.env.CI,
+        },
+        {
+          name: 'super-admin',
+          command: 'npm run start:super-admin',
+          cwd: FRONT_PROJECT_PATH,
+          url: SUPER_ADMIN_URL,
           timeout: 180_000,
           reuseExistingServer: !process.env.CI,
         },
