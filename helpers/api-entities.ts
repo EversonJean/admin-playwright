@@ -60,6 +60,8 @@ export async function apiCreateActivity(api: APIRequestContext, overrides: Parti
       maxChildren: fake.maxChildren,
       minAge: fake.minAgeYears,
       maxAge: fake.maxAgeYears,
+      // DTO atual exige a lista (vazia = atividade sem insumos vinculados).
+      activityProducts: [],
     },
   });
   await expectOk(res, 'apiCreateActivity');

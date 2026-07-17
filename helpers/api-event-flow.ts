@@ -29,6 +29,8 @@ export interface CreateBudgetInput {
   clientId: string;
   activityIds: string[]; // 1+ atividade(s) cobradas por quantidade
   eventDate?: string; // ISO date (YYYY-MM-DD); default = hoje + 30
+  /** Data de término (multi-dia/vira-noite). Omitida = mesmo dia. */
+  eventEndDate?: string;
   startTime?: string; // HH:mm
   endTime?: string;
   childrenCount?: number;
@@ -48,6 +50,8 @@ export async function apiCreateBudget(
   const body = {
     clientId: input.clientId,
     eventDate: input.eventDate ?? todayPlus(30),
+    // Omitida no payload = evento de um dia (retrocompat do contrato).
+    ...(input.eventEndDate ? { eventEndDate: input.eventEndDate } : {}),
     eventStartTime: input.startTime ?? '14:00',
     eventEndTime: input.endTime ?? '18:00',
     eventLocation: 'Salão de festas E2E, Curitiba',
