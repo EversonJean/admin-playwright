@@ -221,13 +221,24 @@ export async function apiCompleteEvent(
 
 // ───────────────────────────── Payment ─────────────────────────────
 
+/** Etapa 160 — natureza do lançamento. */
+export type PaymentEntryKind = 'Regular' | 'Tip' | 'EquipmentReplacement';
+
 export interface PaymentSummary {
   eventId: string;
   eventTotal: number;
   totalPaid: number;
   balance: number;
   financialStatus: string;
-  entries: Array<{ id: string; amount: number; method: string; paidAt: string }>;
+  entries: Array<{
+    id: string;
+    amount: number;
+    method: string;
+    paidAt: string;
+    kind: PaymentEntryKind;
+  }>;
+  /** Σ gorjetas + reposições, líquido de estorno (Etapa 160). */
+  totalExtras: number;
 }
 
 export async function apiGetPaymentSummary(
@@ -241,6 +252,16 @@ export async function apiGetPaymentSummary(
 
 export type PaymentMethod = 'Pix' | 'Cash' | 'Transfer' | 'Card' | 'Other';
 
+/**
+ * Etapa 160 — o POST devolve a LISTA de lançamentos criados: um valor acima do
+ * saldo, com `excessKind`, gera regular + extra no mesmo commit.
+ */
+export interface RegisterPaymentResult {
+  entries: Array<{ id: string; amount: number; kind: PaymentEntryKind }>;
+  regularAmount: number;
+  extraAmount: number;
+}
+
 export async function apiRegisterPayment(
   api: APIRequestContext,
   eventId: string,
@@ -250,8 +271,10 @@ export async function apiRegisterPayment(
     paidAt?: string;
     note?: string;
     installmentId?: string;
+    /** Classifica o EXCEDENTE quando o valor passa do saldo devedor. */
+    excessKind?: Exclude<PaymentEntryKind, 'Regular'>;
   },
-): Promise<CreatedEntity> {
+): Promise<RegisterPaymentResult> {
   const res = await api.post(`/api/events/${eventId}/payments`, {
     data: {
       paidAt: payload.paidAt ?? todayPlus(0),
@@ -259,10 +282,11 @@ export async function apiRegisterPayment(
       method: payload.method,
       note: payload.note ?? null,
       installmentId: payload.installmentId ?? null,
+      excessKind: payload.excessKind ?? null,
     },
   });
   await expectOk(res, 'apiRegisterPayment');
-  return unwrap(await res.json());
+  return unwrap(await res.json()) as RegisterPaymentResult;
 }
 
 // ──────────────────────── Payment plan (parcelas) ────────────────────────
