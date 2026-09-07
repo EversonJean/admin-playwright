@@ -254,7 +254,7 @@ export type PaymentMethod = 'Pix' | 'Cash' | 'Transfer' | 'Card' | 'Other';
 
 /**
  * Etapa 160 — o POST devolve a LISTA de lançamentos criados: um valor acima do
- * saldo, com `excessKind`, gera regular + extra no mesmo commit.
+ * saldo, com `extraKind`, gera regular + extra no mesmo commit.
  */
 export interface RegisterPaymentResult {
   entries: Array<{ id: string; amount: number; kind: PaymentEntryKind }>;
@@ -271,8 +271,13 @@ export async function apiRegisterPayment(
     paidAt?: string;
     note?: string;
     installmentId?: string;
-    /** Classifica o EXCEDENTE quando o valor passa do saldo devedor. */
-    excessKind?: Exclude<PaymentEntryKind, 'Regular'>;
+    /** Natureza do dinheiro que NÃO abate a dívida (Etapa 160/163). */
+    extraKind?: Exclude<PaymentEntryKind, 'Regular'>;
+    /**
+     * Etapa 163 — `false` (default) classifica só o EXCEDENTE; `true` marca o
+     * valor INTEIRO como extra, deixando a dívida intocada.
+     */
+    entireAmountIsExtra?: boolean;
   },
 ): Promise<RegisterPaymentResult> {
   const res = await api.post(`/api/events/${eventId}/payments`, {
@@ -282,7 +287,8 @@ export async function apiRegisterPayment(
       method: payload.method,
       note: payload.note ?? null,
       installmentId: payload.installmentId ?? null,
-      excessKind: payload.excessKind ?? null,
+      extraKind: payload.extraKind ?? null,
+      entireAmountIsExtra: payload.entireAmountIsExtra ?? false,
     },
   });
   await expectOk(res, 'apiRegisterPayment');

@@ -86,7 +86,7 @@ test.describe('Fluxo 10.1 — Pagamentos manuais', () => {
       amount: saldo + gorjeta,
       method: 'Pix',
       note: 'Cliente mandou ficar com o troco',
-      excessKind: 'Tip',
+      extraKind: 'Tip',
     });
 
     expect(result.regularAmount).toBe(saldo);
@@ -135,5 +135,53 @@ test.describe('Fluxo 10.1 — Pagamentos manuais', () => {
     expect(res.status()).toBe(400);
     const body = await res.json();
     expect(body.errors[0].code).toBe('EventPayment.ExceedsEventTotal');
+  });
+
+  /**
+   * Etapa 163 — a caixa de som quebrada.
+   *
+   * O cliente ainda deve, e paga um valor que CABE no saldo — mas o dinheiro é
+   * do equipamento, não da parcela. Sem `entireAmountIsExtra`, o valor abateria
+   * a dívida e o evento apareceria quitado sem ninguém ter pago a parcela.
+   */
+  test('@crud valor inteiro marcado como extra não abate a dívida', async ({ authApi }) => {
+    const cliente = await apiCreateClient(authApi);
+    const atividade = await apiCreateActivity(authApi);
+    const orcamento = await apiCreateBudget(authApi, {
+      clientId: cliente.id,
+      activityIds: [atividade.id],
+    });
+    const sent = await apiSendBudget(authApi, orcamento.id);
+    const token = extractTokenFromPublicUrl(sent.publicUrl);
+    const publicApi = await createPublicApiContext();
+    let eventId: string;
+    try {
+      eventId = (await apiAcceptPublicBudget(publicApi, token)).eventId;
+    } finally {
+      await publicApi.dispose();
+    }
+
+    const { balance: saldo } = await apiGetPaymentSummary(authApi, eventId);
+    // Valor menor que o saldo — sem a flag, isto seria abatimento de dívida.
+    const equipamento = Math.round(saldo / 2);
+
+    const result = await apiRegisterPayment(authApi, eventId, {
+      amount: equipamento,
+      method: 'Pix',
+      note: 'Caixa de som danificada na festa',
+      extraKind: 'EquipmentReplacement',
+      entireAmountIsExtra: true,
+    });
+
+    expect(result.regularAmount).toBe(0);
+    expect(result.extraAmount).toBe(equipamento);
+    expect(result.entries.length).toBe(1);
+    expect(result.entries[0]!.kind).toBe('EquipmentReplacement');
+
+    const summary = await apiGetPaymentSummary(authApi, eventId);
+    // O equipamento não paga a parcela: dívida intocada, extra registrado.
+    expect(summary.totalPaid).toBe(0);
+    expect(summary.balance).toBe(saldo);
+    expect(summary.totalExtras).toBe(equipamento);
   });
 });
