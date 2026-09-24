@@ -149,21 +149,63 @@ export async function apiGetPublicBudget(
   return unwrap(await res.json());
 }
 
+/**
+ * Etapa 188 — o aceite exige corpo: a residência do cliente é obrigatória, e o
+ * endereço do evento também quando o ORÇAMENTO não tem um estruturado (que é o
+ * caso de todo orçamento criado por `apiCreateBudget`).
+ *
+ * `data` permite ao teste mandar outro corpo — inclusive um incompleto, para
+ * provar a recusa.
+ */
+export function publicAcceptBody(): Record<string, unknown> {
+  return {
+    address: {
+      zipCode: '80010-000',
+      street: 'Rua XV de Novembro',
+      number: '1000',
+      complement: null,
+      neighborhood: 'Centro',
+      city: 'Curitiba',
+      state: 'PR',
+    },
+    clientAddress: {
+      zipCode: '80000-000',
+      street: 'Rua das Flores',
+      number: '123',
+      complement: null,
+      neighborhood: 'Centro',
+      city: 'Curitiba',
+      state: 'PR',
+    },
+  };
+}
+
 export async function apiAcceptPublicBudget(
   publicApi: APIRequestContext,
   token: string,
+  data: Record<string, unknown> = publicAcceptBody(),
 ): Promise<CreatedEntity & { eventId: string; status: string }> {
-  const res = await publicApi.post(`/api/public/budgets/${token}/accept`);
+  const res = await publicApi.post(`/api/public/budgets/${token}/accept`, { data });
   await expectOk(res, 'apiAcceptPublicBudget');
   return unwrap(await res.json()) as CreatedEntity & { eventId: string; status: string };
 }
 
-/** Tenta aceitar — não lança em status 4xx; usado em cenários negativos. */
+/**
+ * Tenta aceitar — não lança em status 4xx; usado em cenários negativos.
+ *
+ * `data` omitido = corpo VAZIO, que desde a Etapa 188 é recusado com
+ * `PublicBudget.ClientAddressRequired` quando o token é válido. Em cenário de
+ * token inválido o corpo nem é olhado (404 vem antes).
+ */
 export async function apiTryAcceptPublicBudget(
   publicApi: APIRequestContext,
   token: string,
+  data?: Record<string, unknown>,
 ): Promise<{ ok: boolean; status: number; body: unknown }> {
-  const res = await publicApi.post(`/api/public/budgets/${token}/accept`);
+  const res = await publicApi.post(
+    `/api/public/budgets/${token}/accept`,
+    data === undefined ? {} : { data },
+  );
   return { ok: res.ok(), status: res.status(), body: await res.json().catch(() => null) };
 }
 

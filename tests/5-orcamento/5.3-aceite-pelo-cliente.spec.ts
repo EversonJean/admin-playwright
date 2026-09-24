@@ -19,6 +19,7 @@ import {
  * - GET publico devolve dados sem auth
  * - POST publico /accept transiciona Sent -> Accepted + gera EventId
  * - Token invalido -> 404
+ * - Etapa 188: corpo sem o endereço de residência -> 400, orcamento intacto
  */
 
 test.describe('Fluxo 5.3 — Aceite pelo cliente', () => {
@@ -55,6 +56,35 @@ test.describe('Fluxo 5.3 — Aceite pelo cliente', () => {
     // Confirmacao via API autenticada
     const after = (await apiGetBudget(authApi, orcamento.id)) as unknown as { status: string };
     expect(after.status).toBe('Accepted');
+  });
+
+  test('@crud aceite sem endereco de residencia devolve 400 e mantem o orcamento ofertavel', async ({
+    authApi,
+  }) => {
+    // Etapa 188 — a residência virou obrigatória porque chega PRÉ-PREENCHIDA
+    // com o que a empresa tem; sem ela o cadastro fica sem o endereço que o
+    // contrato precisa. O orçamento não pode ser consumido por uma recusa.
+    const cliente = await apiCreateClient(authApi);
+    const atividade = await apiCreateActivity(authApi);
+    const orcamento = await apiCreateBudget(authApi, {
+      clientId: cliente.id,
+      activityIds: [atividade.id],
+    });
+    const sent = await apiSendBudget(authApi, orcamento.id);
+    const token = extractTokenFromPublicUrl(sent.publicUrl);
+
+    const publicApi = await createPublicApiContext();
+    try {
+      const recusado = await apiTryAcceptPublicBudget(publicApi, token);
+      expect(recusado.ok).toBe(false);
+      expect(recusado.status).toBe(400);
+
+      // E o link continua servindo: o cliente corrige e aceita na mesma tela.
+      const aceito = await apiAcceptPublicBudget(publicApi, token);
+      expect(aceito.status).toBe('Accepted');
+    } finally {
+      await publicApi.dispose();
+    }
   });
 
   test('@flow token invalido devolve 404 sem vazar info', async () => {
