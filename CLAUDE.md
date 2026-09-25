@@ -25,6 +25,34 @@ npm run db:reset
 
 O back sobe com `--launch-profile e2e` e `appsettings.E2E.json` aponta cada integração para o fake correspondente.
 
+[ALERTA] **`reuseExistingServer` + o segundo clone = o e2e roda contra o codigo
+ERRADO, em silencio.** Existem dois clones deste workspace na maquina (ver o
+`CLAUDE.md` da raiz). Em dev o `playwright.config.ts` usa
+`reuseExistingServer: !process.env.CI`: se JA houver algo respondendo em 1501 ou
+4200, o Playwright **reusa** em vez de subir o deste clone. Se o que estiver la
+for o outro clone, a suite exercita a outra branch — e um verde ali nao prova
+nada sobre o que voce acabou de escrever.
+
+O sintoma NAO diz isso. O outro clone roda `appsettings.Development.json` (banco
+`admin-dev`) enquanto o `helpers/db-helper.ts` escreve em `adminbackend` (o
+default, que e o mesmo do `appsettings.E2E.json`): o helper confirma o e-mail num
+banco e o back le o outro, e o teste morre em `Auth.EmailNotVerified`. Parece
+problema do teste; e clone trocado.
+
+Antes de rodar, confira **de quem** sao os processos:
+
+```
+powershell -c "Get-NetTCPConnection -LocalPort 1501,4200 -State Listen | ForEach-Object { (Get-CimInstance Win32_Process -Filter \"ProcessId = $($_.OwningProcess)\").CommandLine }"
+```
+
+O caminho tem de conter o nome DESTE clone. Se nao, derrube o processo — a skill
+`start-app` da raiz e quem decide qual dos dois sobe.
+
+[NOTA] O `webServer` tem timeout de 180s e o back sobe com `dotnet run`, que
+**compila**. Em build frio isso estoura e o erro e so
+`Timed out waiting 180000ms from config.webServer`, sem dizer qual servidor.
+Rode `dotnet build` no `admin-backend` antes da primeira execucao do dia.
+
 ## Regras
 
 - Pré-condição por **API** (`helpers/api-entities`), nunca por UI: UI só para o fluxo que o teste prova.
