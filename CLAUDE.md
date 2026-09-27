@@ -48,6 +48,15 @@ powershell -c "Get-NetTCPConnection -LocalPort 1501,4200 -State Listen | ForEach
 O caminho tem de conter o nome DESTE clone. Se nao, derrube o processo — a skill
 `start-app` da raiz e quem decide qual dos dois sobe.
 
+[ALERTA] **No perfil `e2e` a porta e a base NAO se trocam por variavel de
+ambiente.** O `Program.cs` adiciona o `appsettings.E2E.json` depois das env vars,
+entao `Kestrel__Endpoints__Https__Url` e `ConnectionStrings__Default` perdem para
+ele: o back E2E sobe sempre na 1501 com a base `adminbackend`, e o `MigrateAsync`
+do boot aplica as migrations do working tree NESSA base. A porta 1502 e a base
+`new-features` da skill `start-app` valem so para Development (que tem
+`AuthPermitLimit` 5 e nao aguenta a suite). O `BACK_CONNECTION_STRING` do
+`playwright.config.ts` tambem nao tem efeito, pelo mesmo motivo.
+
 [NOTA] O `webServer` tem timeout de 180s e o back sobe com `dotnet run`, que
 **compila**. Em build frio isso estoura e o erro e so
 `Timed out waiting 180000ms from config.webServer`, sem dizer qual servidor.

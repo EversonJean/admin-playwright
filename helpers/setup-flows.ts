@@ -207,6 +207,8 @@ export async function setupPortalUser(
   portalApi: APIRequestContext;
   collaboratorId: string;
   email: string;
+  /** Tokens do usuário de portal — para injetar no localStorage de uma Page (UI do Portal). */
+  tokens: { accessToken: string; refreshToken: string };
   publicApiDispose: () => Promise<void>;
 }> {
   const colab = await apiCreateCollaborator(authApi);
@@ -241,6 +243,7 @@ export async function setupPortalUser(
     portalApi,
     collaboratorId: colab.id,
     email: portalUser.email,
+    tokens,
     publicApiDispose: async () => {
       await publicApi.dispose();
     },

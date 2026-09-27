@@ -50,6 +50,9 @@ test.describe('Fluxo <N.M> — <nome>', () => {
 - Criar pré-condição pela UI: lento e frágil; um `getByTestId` renomeado derruba dez specs.
 - Assumir formato do envelope na resposta da API: o `authApi` recebe o JSON cru do back (`{ isError, data, errors }`); ler `data`.
 - Spec sem `data-testid` novo no front: o seletor por texto quebra na primeira tradução.
+- [ALERTA] **Tenant recém-criado cai no assistente de configuração.** O `onboardingGuard` do front (Etapa 109) redireciona para `/app/onboarding` a cada `page.goto` (o "uma vez por sessão" dele reinicia a cada carga de página), e o spec de UI espera um `data-testid` que nunca aparece. Spec de UI do tenant chama `apiCompleteOnboarding(authApi)` antes do `goto` (`3.4`, `7.1`). Specs antigos que não chamam (ex.: `3.1`, "cria colaborador via UI") falham por isso desde a 109.
+- `<mat-tab data-testid>` não chega ao cabeçalho renderizado: aba por `getByRole('tab', { name, exact: true })` (sem `exact`, "Equipe" casa "Roteiro da equipe").
+- Snackbar de erro aparece duas vezes por instantes: o `errorInterceptor` global notifica e a feature substitui pela mensagem do tradutor. Localize com `.last()`.
 
 ## Veja também
 

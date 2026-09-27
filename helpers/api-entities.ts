@@ -86,6 +86,50 @@ export async function apiCreateCollaborator(api: APIRequestContext, overrides: P
   return body.data ?? body;
 }
 
+/**
+ * POST /api/company/complete-onboarding — marca a configuração inicial como
+ * concluída. Sem isto, o `onboardingGuard` do front (Etapa 109) manda o tenant
+ * recém-criado para `/app/onboarding` a cada `page.goto` (o "uma vez por
+ * sessão" dele reinicia a cada carga de página) e o spec de UI nunca vê a tela
+ * que pediu. Tenant novo está em período de teste: não exige documento.
+ */
+export async function apiCompleteOnboarding(api: APIRequestContext): Promise<void> {
+  const res = await api.post('/api/company/complete-onboarding');
+  await expectOk(res, 'apiCompleteOnboarding');
+}
+
+/**
+ * POST /api/skills — habilidade do catálogo do tenant (Etapa 192). Nome único
+ * por `Date.now()`: o back recusa duplicata ignorando maiúsculas, acentos e
+ * espaços, então dois testes com o mesmo prefixo fixo colidiriam.
+ */
+export async function apiCreateSkill(
+  api: APIRequestContext,
+  overrides: { name?: string; description?: string | null } = {},
+): Promise<CreatedEntity & { name: string }> {
+  const res = await api.post('/api/skills', {
+    data: {
+      name: overrides.name ?? `Habilidade E2E ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      description: overrides.description ?? null,
+    },
+  });
+  await expectOk(res, 'apiCreateSkill');
+  const body = await res.json();
+  return body.data ?? body;
+}
+
+/** POST /api/collaborators/:id/skills — vincula uma habilidade do catálogo ao colaborador. */
+export async function apiAddCollaboratorSkill(
+  api: APIRequestContext,
+  collaboratorId: string,
+  skillId: string,
+): Promise<CreatedEntity & { skillId: string }> {
+  const res = await api.post(`/api/collaborators/${collaboratorId}/skills`, { data: { skillId } });
+  await expectOk(res, 'apiAddCollaboratorSkill');
+  const body = await res.json();
+  return body.data ?? body;
+}
+
 /** GET /api/clients — útil pra validar listagem após criar */
 export async function apiListClients(api: APIRequestContext): Promise<{ items: CreatedEntity[] }> {
   const res = await api.get('/api/clients');
