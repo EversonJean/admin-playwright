@@ -23,6 +23,8 @@ SKIP_WEBSERVER=true npm test   # back/front já rodando em outro terminal
 npm run db:reset
 ```
 
+Agente roda pelo script, não pelo `npx` cru: `node .claude/scripts/testar.js e2e <spec>[,<spec2>]` (da raiz do workspace) confere o dono das portas (para se for o outro clone), faz o `dotnet build`, roda com relatório JSON e devolve só teste, `arquivo:linha`, mensagem e o caminho do `error-context.md`, screenshot e trace de cada falha. `--checar` faz só a conferência das portas.
+
 O back sobe com `--launch-profile e2e` e `appsettings.E2E.json` aponta cada integração para o fake correspondente.
 
 [ALERTA] **`reuseExistingServer` + o segundo clone = o e2e roda contra o codigo
@@ -68,7 +70,7 @@ Rode `dotnet build` no `admin-backend` antes da primeira execucao do dia.
 - Seletores por `data-testid`; o front os expõe em tudo clicável.
 - Cada teste cria o próprio tenant (fixture); o banco fica sujo e isso é aceito: o filtro multi-tenant do back isola.
 - Integração externa sempre via fake; asserção no inbox do fake (`/_control/inbox`), webhook disparado via `/_control/trigger-webhook`.
-- Todo plano de feature (`docs/implementar/PLANO-*.md`) termina com um spec aqui; o diagrama `docs/fluxos/negocio-N.M-*.mmd` tem o mesmo número do spec.
+- Spec nasce **no fim de um plano**, não por etapa: as etapas anotam os cenários no registro e2e do plano (`docs/CLAUDE.md` da raiz, "Registro e2e do plano") e o `/e2e-plano` escreve e roda todos de uma vez. O spec afirma o que o plano pede; falha em que o código diverge do plano não se conserta afrouxando a asserção. O diagrama `docs/fluxos/negocio-N.M-*.mmd` tem o mesmo número do spec.
 
 ## Veja também
 
