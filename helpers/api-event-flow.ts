@@ -211,6 +211,28 @@ export async function apiTryAcceptPublicBudget(
 
 // ───────────────────────────── Event ─────────────────────────────
 
+/**
+ * POST /api/events/public — evento aberto ao público (Etapa 150). Exige o
+ * entitlement `feature_ticketing` no tenant (`enableFeatureFlagDirect`).
+ * Nasce `Scheduled` e usa a máquina de estados completa (Start -> Complete).
+ */
+export async function apiCreatePublicEvent(
+  api: APIRequestContext,
+  input: { title?: string; eventDate?: string; startTime?: string; endTime?: string } = {},
+): Promise<CreatedEntity & { kind: string; status: string }> {
+  const res = await api.post('/api/events/public', {
+    data: {
+      title: input.title ?? `Evento público E2E ${Date.now()}`,
+      eventDate: input.eventDate ?? todayPlus(7),
+      startTime: input.startTime ?? '10:00',
+      endTime: input.endTime ?? '16:00',
+      location: 'Praça E2E, Curitiba',
+    },
+  });
+  await expectOk(res, 'apiCreatePublicEvent');
+  return unwrap(await res.json());
+}
+
 export async function apiGetEvent(
   api: APIRequestContext,
   eventId: string,
@@ -335,6 +357,35 @@ export async function apiRegisterPayment(
   });
   await expectOk(res, 'apiRegisterPayment');
   return unwrap(await res.json()) as RegisterPaymentResult;
+}
+
+// ──────────────────────── Devoluções (FinancialAdjustments) ────────────────────────
+
+/** POST .../financial-adjustments/reversal — anula um lançamento inteiro. */
+export async function apiReversePaymentEntry(
+  api: APIRequestContext,
+  eventId: string,
+  paymentEntryId: string,
+  reason = 'Estorno E2E',
+): Promise<void> {
+  const res = await api.post(`/api/events/${eventId}/financial-adjustments/reversal`, {
+    data: { paymentEntryId, reason, notes: null },
+  });
+  await expectOk(res, 'apiReversePaymentEntry');
+}
+
+/** POST .../financial-adjustments/refund — devolução (parcial ou total) sobre uma parcela. */
+export async function apiRefundInstallment(
+  api: APIRequestContext,
+  eventId: string,
+  installmentId: string,
+  amount: number,
+  reason = 'Reembolso E2E',
+): Promise<void> {
+  const res = await api.post(`/api/events/${eventId}/financial-adjustments/refund`, {
+    data: { installmentId, amount, reason, notes: null },
+  });
+  await expectOk(res, 'apiRefundInstallment');
 }
 
 // ──────────────────────── Payment plan (parcelas) ────────────────────────

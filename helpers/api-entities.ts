@@ -130,6 +130,37 @@ export async function apiAddCollaboratorSkill(
   return body.data ?? body;
 }
 
+/**
+ * POST /api/contact-identities — identidade de contato com um ou mais
+ * WhatsApps (Etapa 68). Exige `feature_leads` ou `feature_whatsapp` no tenant.
+ * O primeiro telefone da lista é o primário.
+ */
+export async function apiCreateContactIdentity(
+  api: APIRequestContext,
+  input: { displayName?: string; whatsappPhones: string[] },
+): Promise<CreatedEntity & { displayName: string }> {
+  const res = await api.post('/api/contact-identities', {
+    data: {
+      displayName: input.displayName ?? `Contato E2E ${Date.now()}`,
+      source: 'Manual',
+      isKnown: true,
+      clientId: null,
+      tags: null,
+      notes: null,
+      points: input.whatsappPhones.map((value, i) => ({
+        type: 'Whatsapp',
+        value,
+        isPrimary: i === 0,
+        consentStatus: null,
+        isVerified: null,
+      })),
+    },
+  });
+  await expectOk(res, 'apiCreateContactIdentity');
+  const body = await res.json();
+  return body.data ?? body;
+}
+
 /** GET /api/clients — útil pra validar listagem após criar */
 export async function apiListClients(api: APIRequestContext): Promise<{ items: CreatedEntity[] }> {
   const res = await api.get('/api/clients');

@@ -111,6 +111,40 @@ export function seedApprovedWhatsAppTemplateDirect(input: {
 }
 
 /**
+ * Liga o canal WhatsApp de um tenant direto no banco, para o webhook de
+ * entrada (fake `whatsapp-meta`, `/_control/trigger-webhook` kind=inbound)
+ * achar o tenant. Nao ha caminho por API: o `connect` do Embedded Signup troca
+ * `code` por token na Graph API, que o fake nao implementa.
+ *
+ * O fake manda SEMPRE `phone_number_id = 'fake_phone'` e o back resolve o
+ * tenant pelo PRIMEIRO canal ATIVO com esse id (sem unique global). Por isso
+ * os canais ativos de outros tenants com o mesmo id sao desativados antes:
+ * o banco E2E e sujo por design, e sem isso o inbound cairia no tenant de uma
+ * execucao anterior. Consequencia: dois specs que usam inbound nao podem rodar
+ * ao mesmo tempo.
+ *
+ * Classificacao e auto-lead ficam desligados: o spec quer so a conversa.
+ */
+export function seedWhatsappChannelDirect(tenantId: string, phoneNumberId = 'fake_phone'): void {
+  const safeTenant = tenantId.replace(/'/g, "''");
+  const safePhone = phoneNumberId.replace(/'/g, "''");
+  execSql(`
+    UPDATE "WhatsappChannelConfigs" SET "IsActive" = false, "UpdatedAt" = now()
+     WHERE "PhoneNumberId" = '${safePhone}' AND "IsActive" = true;
+    INSERT INTO "WhatsappChannelConfigs"
+      ("Id", "TenantId", "PhoneNumberId", "BusinessAccountId", "VerifyTokenHash",
+       "IsActive", "MirrorSentMessages", "SaveMedia", "IgnoreGroups",
+       "AutoClassify", "UseAiClassifier", "AutoCreateLeadFromWhatsapp",
+       "StoreMediaFiles", "CreatedAt", "UpdatedAt", "IsDeleted")
+    VALUES
+      (gen_random_uuid(), '${safeTenant}', '${safePhone}', 'fake_waba_id', 'e2e',
+       true, false, false, true,
+       false, false, false,
+       false, now(), now(), false);
+  `);
+}
+
+/**
  * Cria User adicional num tenant com role especifico (Owner/Admin/Manager/
  * Financial) reusando o PasswordHash do superadmin. Usado pra exercitar
  * gates de permission (403) sem rodar fluxo de invite.
