@@ -1,5 +1,11 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { enableFeatureFlagDirect } from '../../helpers/db-helper';
+import {
+  apiCompleteOnboarding,
+  apiCreateClient,
+  createInBatches,
+} from '../../helpers/api-entities';
+import { assertOk, readJson } from '../../helpers/response';
 
 /**
  * Fluxo: 4.4 — Conversão de lead
@@ -63,5 +69,50 @@ test.describe('Fluxo 4.4 — Conversão de lead', () => {
     expect(clientRes.ok()).toBe(true);
     const client = (await clientRes.json()).data ?? (await clientRes.json());
     expect(client.name).toMatch(/Lead convert/);
+  });
+
+  /**
+   * E10 do PLANO-AJUSTES-DA-CONVERSAO (revisão pós-entrega da Etapa 195, §5):
+   * o formulário do lead carrega só os 100 primeiros clientes por nome (o
+   * catálogo da sugestão por telefone). O lead vinculado a um cliente fora
+   * desses 100 abria com o campo vazio: o nome vinha por GET pontual, mas a
+   * tela `OnPush` não reavaliava o `[selectedLabel]`. Agora o campo mostra o
+   * nome do cliente vinculado.
+   */
+  test('@flow lead linked to a client outside the first 100 opens with the client name', async ({
+    authApi,
+    authPage,
+    tenant,
+  }) => {
+    test.setTimeout(180_000);
+    enableFeatureFlagDirect(tenant.tenantId, 'feature_leads');
+    await apiCompleteOnboarding(authApi);
+
+    // 100 clientes que vêm antes por nome; o vinculado fica em 101º.
+    const run = Date.now().toString(36);
+    await createInBatches(100, (i) =>
+      apiCreateClient(authApi, { name: `AAA Cliente ${run} ${String(i).padStart(3, '0')}` }),
+    );
+    const linked = await apiCreateClient(authApi, { name: `ZZZ Cliente vinculado ${run}` });
+
+    const create = await authApi.post('/api/leads', {
+      data: {
+        name: `Lead vinculado ${run}`,
+        whatsAppPhone: '41966665555',
+        email: null,
+        source: 'WhatsApp',
+        isRecurring: true,
+        clientId: linked.id,
+      },
+    });
+    await assertOk(create, 'POST /api/leads');
+    const lead = await readJson<{ id: string; clientId?: string | null }>(create);
+    expect(lead.clientId).toBe(linked.id);
+
+    await authPage.goto(`/app/leads/${lead.id}`);
+    await expect(authPage.getByTestId('lead-form-client')).toHaveValue(
+      `ZZZ Cliente vinculado ${run}`,
+      { timeout: 15_000 },
+    );
   });
 });

@@ -45,7 +45,20 @@ await createFakeServer({
       // Outras acoes (propose-budget, event-timeline) parseiam keys
       // proprias do schema — quando precisar de um spec deep delas,
       // estender este return condicionalmente pelo conteudo do prompt.
-      const content = wantJson
+      // Raio-X das recusas (`RefusalAnalysisPrompt`, AiAction.AnalyzeRefusal):
+      // o parser do back rejeita categoria fora da taxonomia, entao o shape
+      // generico abaixo nunca completaria a analise. Reconhecido pela
+      // instrucao fixa do prompt; categoria `price` deterministica.
+      const isRefusalAnalysis = (lastUser?.content ?? '').includes('Classifique a perda');
+      const content = isRefusalAnalysis
+        ? JSON.stringify({
+            category: 'price',
+            customCategory: null,
+            confidence: 0.9,
+            summary: 'Cliente achou o valor alto (fake).',
+            competitorName: null,
+          })
+        : wantJson
         ? JSON.stringify({
             bodyHtml: `<p>Clausula gerada (fake) a partir de: ${echo.slice(0, 60)}</p>`,
             bodyPlain: `Clausula gerada (fake) a partir de: ${echo.slice(0, 60)}`,

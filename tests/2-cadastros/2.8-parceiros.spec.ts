@@ -1,6 +1,7 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
 import { assertOk } from '../../helpers/response';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 
 /**
  * Fluxo: 2.8 — Parceiros (venda via parceiro)
@@ -17,8 +18,15 @@ import { assertOk } from '../../helpers/response';
  */
 
 const CNPJ = '11222333000181';
+// Telefone é obrigatório no cadastro (`Phone`, "[Telefone] é obrigatório.").
+const PHONE = '41999990000';
 
 test.describe('Fluxo 2.8 — Parceiros e venda via parceiro', () => {
+  // Tenant recém-criado cai no assistente de configuração (onboardingGuard).
+  test.beforeEach(async ({ authApi }) => {
+    await apiCompleteOnboarding(authApi);
+  });
+
   test('@flow lista e ficha do parceiro carregam autenticadas', async ({ authPage }) => {
     await smokeRoute(authPage, '/app/partners/list');
     await smokeRoute(authPage, '/app/partners/new');
@@ -33,6 +41,7 @@ test.describe('Fluxo 2.8 — Parceiros e venda via parceiro', () => {
     await authPage.goto('/app/partners/new');
     await authPage.getByTestId('client-form-name').fill(nome);
     await authPage.getByTestId('client-form-document').fill(CNPJ);
+    await authPage.getByTestId('client-form-phone').fill(PHONE);
     await authPage.getByTestId('client-form-save').click();
     await authPage.waitForURL(/\/app\/partners\/list(\?|$)/, { timeout: 10_000 });
 
@@ -54,6 +63,7 @@ test.describe('Fluxo 2.8 — Parceiros e venda via parceiro', () => {
         type: 'PJ',
         name: partnerName,
         document: CNPJ,
+        phone: PHONE,
         isPartner: true,
         partnerCategory: 'Buffet',
       },
@@ -106,7 +116,7 @@ test.describe('Fluxo 2.8 — Parceiros e venda via parceiro', () => {
     // qualquer orçamento poderia se declarar venda via parceiro e sair do NPS,
     // do aniversário e do backfill do formulário.
     const common = await authApi.post('/api/clients', {
-      data: { type: 'PF', name: `Cliente Comum ${Date.now()}`, document: '11144477735' },
+      data: { type: 'PF', name: `Cliente Comum ${Date.now()}`, document: '11144477735', phone: PHONE },
     });
     await assertOk(common, 'criar cliente comum');
     const clientId = (await common.json()).data.id as string;

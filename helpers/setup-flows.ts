@@ -3,7 +3,11 @@ import { apiCreateActivity, apiCreateClient, apiCreateCollaborator } from './api
 import {
   apiAcceptPublicBudget,
   apiCreateBudget,
+  apiCreatePaymentPlan,
+  apiGetPaymentSummary,
+  apiRegisterPayment,
   apiSendBudget,
+  CreateBudgetInput,
   createPublicApiContext,
   extractTokenFromPublicUrl,
 } from './api-event-flow';
@@ -21,18 +25,28 @@ const BACK_URL = process.env.BACK_URL ?? 'https://localhost:1501';
  *
  * Uso:
  *   const { eventId, clienteId, orcamentoId } = await setupAcceptedEvent(authApi);
+ *
+ * `opts.clientId` reaproveita um cliente existente (duas festas do mesmo
+ * cliente); `opts.budget` troca data, horário e crianças do orçamento.
  */
-export async function setupAcceptedEvent(api: APIRequestContext): Promise<{
+export async function setupAcceptedEvent(
+  api: APIRequestContext,
+  opts: {
+    clientId?: string;
+    budget?: Partial<Omit<CreateBudgetInput, 'clientId' | 'activityIds'>>;
+  } = {},
+): Promise<{
   eventId: string;
   clienteId: string;
   atividadeId: string;
   orcamentoId: string;
   budgetTotal: number;
 }> {
-  const cliente = await apiCreateClient(api);
+  const clienteId = opts.clientId ?? (await apiCreateClient(api)).id;
   const atividade = await apiCreateActivity(api);
   const orcamento = await apiCreateBudget(api, {
-    clientId: cliente.id,
+    ...opts.budget,
+    clientId: clienteId,
     activityIds: [atividade.id],
   });
   const sent = await apiSendBudget(api, orcamento.id);
@@ -43,7 +57,7 @@ export async function setupAcceptedEvent(api: APIRequestContext): Promise<{
     const aceito = await apiAcceptPublicBudget(publicApi, token);
     return {
       eventId: aceito.eventId,
-      clienteId: cliente.id,
+      clienteId,
       atividadeId: atividade.id,
       orcamentoId: orcamento.id,
       budgetTotal: (orcamento as unknown as { total?: number }).total ?? 0,
@@ -54,26 +68,36 @@ export async function setupAcceptedEvent(api: APIRequestContext): Promise<{
 }
 
 /**
- * Setup completo de contrato Formalized: aceite -> template+clausula
- * ativos -> create contract -> send digital signature -> webhook 'sign'
- * via fake ClickSign HMAC real. Devolve contractId + envelope + eventId.
- *
- * Substitui ~80 linhas duplicadas em 9.3, 9.4 e futuros specs que
- * precisam de contrato assinado.
- *
- * Requer: `feature_digital_signature` ativo (helper ativa automaticamente).
+ * Festa aceita e QUITADA numa parcela única: plano com uma parcela do total
+ * do evento e um Pix do mesmo valor nela. É a pré-condição do crédito ao
+ * cliente (Etapa 198), que só devolve o que já foi pago na parcela.
  */
-export async function setupFormalizedContract(
+export async function setupPaidEvent(
+  api: APIRequestContext,
+  opts: Parameters<typeof setupAcceptedEvent>[1] = {},
+): Promise<{ eventId: string; clienteId: string; installmentId: string; total: number }> {
+  const { eventId, clienteId } = await setupAcceptedEvent(api, opts);
+  const { eventTotal } = await apiGetPaymentSummary(api, eventId);
+  const due = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+  const plan = await apiCreatePaymentPlan(api, eventId, [
+    { order: 1, label: 'Parcela única', expectedAmount: eventTotal, dueDate: due },
+  ]);
+  const installmentId = plan.installments[0]!.id;
+  await apiRegisterPayment(api, eventId, { amount: eventTotal, method: 'Pix', installmentId });
+  return { eventId, clienteId, installmentId, total: eventTotal };
+}
+
+/**
+ * Contrato em rascunho de um evento aceito: aceite -> template + cláusula
+ * ativos -> create contract. Ainda não enviado para assinatura. Liga
+ * `feature_digital_signature` para o envio que o chamador fizer depois.
+ */
+export async function setupDraftContract(
   api: APIRequestContext,
   tenantId: string,
-): Promise<{
-  contractId: string;
-  eventId: string;
-  templateId: string;
-  envelope: { providerDocumentKey: string; providerSignerKey?: string };
-}> {
+): Promise<{ contractId: string; eventId: string; templateId: string; clienteId: string }> {
   enableFeatureFlagDirect(tenantId, 'feature_digital_signature');
-  const { eventId } = await setupAcceptedEvent(api);
+  const { eventId, clienteId } = await setupAcceptedEvent(api);
 
   // Layout pra usar como base do template
   const layoutsRes = await api.get('/api/contract-layouts');
@@ -111,7 +135,8 @@ export async function setupFormalizedContract(
     data: {
       title: `Clausula E2E ${Date.now()}`,
       category: 'Geral',
-      applicableTo: 'ClientIndividual',
+      // `ClauseApplicability` é flags e o DTO recebe o número (1 = pessoa física).
+      applicableTo: 1,
       isRequired: false,
       suggestedOrder: 1,
       bodyHtml: '<p>Clausula de teste.</p>',
@@ -150,6 +175,30 @@ export async function setupFormalizedContract(
   });
   await assertOk(contractRes, 'POST /api/contracts');
   const contract = await readJson<{ id: string }>(contractRes);
+  return { contractId: contract.id, eventId, templateId: template.id, clienteId };
+}
+
+/**
+ * Setup completo de contrato Formalized: `setupDraftContract` -> send digital
+ * signature -> webhook 'sign' via fake ClickSign HMAC real. Devolve
+ * contractId + envelope + eventId.
+ *
+ * Substitui ~80 linhas duplicadas em 9.3, 9.4 e futuros specs que
+ * precisam de contrato assinado.
+ *
+ * Requer: `feature_digital_signature` ativo (helper ativa automaticamente).
+ */
+export async function setupFormalizedContract(
+  api: APIRequestContext,
+  tenantId: string,
+): Promise<{
+  contractId: string;
+  eventId: string;
+  templateId: string;
+  envelope: { providerDocumentKey: string; providerSignerKey?: string };
+}> {
+  const { contractId, eventId, templateId } = await setupDraftContract(api, tenantId);
+  const contract = { id: contractId };
 
   // Envia pra assinatura digital
   await assertOk(
@@ -185,7 +234,7 @@ export async function setupFormalizedContract(
   return {
     contractId: contract.id,
     eventId,
-    templateId: template.id,
+    templateId,
     envelope,
   };
 }

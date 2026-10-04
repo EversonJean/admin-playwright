@@ -1,6 +1,14 @@
+import { APIRequestContext, request as playwrightRequest } from '@playwright/test';
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
-import { apiCreateActivity, apiCreateClient } from '../../helpers/api-entities';
+import { loginViaApi } from '../../helpers/api-client';
+import {
+  apiCompleteOnboarding,
+  apiCreateActivity,
+  apiCreateClient,
+} from '../../helpers/api-entities';
+import { seedUserWithRoleDirect } from '../../helpers/db-helper';
+import { assertOk, readJson } from '../../helpers/response';
 import {
   apiAcceptPublicBudget,
   apiCreateBudget,
@@ -18,18 +26,57 @@ import {
  * PaymentTermsTemplate define modelos de parcelamento. Plano efetivo
  * vive em /api/events/:id/payment-plan (criado a partir do template ou
  * inline com installments[]).
+ *
+ * Etapa 198 (PLANO-AJUSTES-DA-CONVERSAO §7 item 3; registro e2e E21): a lista
+ * de modelos ganha a ação Ativar/Inativar (`paymentterms.manage`). O modelo
+ * padrão não inativa (`PaymentTerms.IsDefault`); quem só lê (Gerente) não vê
+ * a ação e o back recusa a rota com 403.
  */
 
+const BACK_URL = process.env.BACK_URL ?? 'https://localhost:1501';
+
+interface TemplateDto {
+  id: string;
+  status: 'Active' | 'Inactive';
+  isDefault: boolean;
+}
+
+async function apiCreateTemplate(
+  api: APIRequestContext,
+  input: { name: string; isDefault: boolean },
+): Promise<TemplateDto> {
+  const res = await api.post('/api/payment-terms-templates', {
+    data: {
+      name: input.name,
+      isDefault: input.isDefault,
+      installments: [{ order: 1, label: 'À vista', percentage: 100, dueRule: 'OnAcceptance' }],
+    },
+  });
+  await assertOk(res, 'POST /api/payment-terms-templates');
+  return readJson<TemplateDto>(res);
+}
+
+async function apiGetTemplate(api: APIRequestContext, id: string): Promise<TemplateDto> {
+  const res = await api.get(`/api/payment-terms-templates/${id}`);
+  await assertOk(res, 'GET /api/payment-terms-templates/{id}');
+  return readJson<TemplateDto>(res);
+}
+
 test.describe('Fluxo 10.2 — Parcelas automáticas', () => {
-  test('@flow termos de pagamento carrega autenticada', async ({ authPage }) => {
+  // Tenant recém-criado cai no assistente de configuração (onboardingGuard):
+  // as telas só abrem depois do `apiCompleteOnboarding`.
+  test('@flow termos de pagamento carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
     await smokeRoute(authPage, '/app/settings/payment-terms');
   });
 
-  test('@flow tela de recebíveis carrega autenticada', async ({ authPage }) => {
+  test('@flow tela de recebíveis carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
     await smokeRoute(authPage, '/app/finance/receivables');
   });
 
-  test('@flow tela /settings/payment-terms/new carrega autenticada', async ({ authPage }) => {
+  test('@flow tela /settings/payment-terms/new carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
     await smokeRoute(authPage, '/app/settings/payment-terms/new');
   });
 
@@ -86,5 +133,108 @@ test.describe('Fluxo 10.2 — Parcelas automáticas', () => {
     expect(got).toBeTruthy();
     expect(got!.installments.length).toBe(2);
     expect(got!.installments[0]!.label).toBe('Sinal');
+  });
+
+  test('@crud list action deactivates and activates a template; the default one is not deactivated', async ({
+    authApi,
+    authPage,
+  }) => {
+    const stamp = Date.now();
+    const regular = await apiCreateTemplate(authApi, { name: `Modelo E2E ${stamp}`, isDefault: false });
+    const standard = await apiCreateTemplate(authApi, {
+      name: `Padrão E2E ${stamp}`,
+      isDefault: true,
+    });
+    expect(regular.status).toBe('Active');
+
+    await apiCompleteOnboarding(authApi);
+    await authPage.goto('/app/settings/payment-terms');
+    await expect(authPage.getByTestId('payment-terms-table')).toBeVisible({ timeout: 15_000 });
+
+    // Inativar
+    await expect(authPage.getByTestId(`payment-terms-status-${regular.id}`)).toHaveText('Ativo');
+    await authPage.getByTestId(`payment-terms-toggle-${regular.id}`).click();
+    await expect(authPage.getByTestId(`payment-terms-status-${regular.id}`)).toHaveText('Inativo', {
+      timeout: 15_000,
+    });
+    expect((await apiGetTemplate(authApi, regular.id)).status).toBe('Inactive');
+
+    // Ativar de novo
+    await authPage.getByTestId(`payment-terms-toggle-${regular.id}`).click();
+    await expect(authPage.getByTestId(`payment-terms-status-${regular.id}`)).toHaveText('Ativo', {
+      timeout: 15_000,
+    });
+    expect((await apiGetTemplate(authApi, regular.id)).status).toBe('Active');
+
+    // O padrão não inativa: a tela explica e o status não muda.
+    await authPage.getByTestId(`payment-terms-toggle-${standard.id}`).click();
+    await expect(authPage.locator('.mat-mdc-snack-bar-label').last()).toContainText(
+      'template padrão',
+      { timeout: 15_000 },
+    );
+    await expect(authPage.getByTestId(`payment-terms-status-${standard.id}`)).toHaveText('Ativo');
+    const stillDefault = await apiGetTemplate(authApi, standard.id);
+    expect(stillDefault.status).toBe('Active');
+    expect(stillDefault.isDefault).toBe(true);
+  });
+
+  test('@flow read-only user (Manager) does not see the action and gets 403 on activate/deactivate', async ({
+    authApi,
+    authPage,
+    tenant,
+  }) => {
+    const template = await apiCreateTemplate(authApi, {
+      name: `Modelo E2E ${Date.now()}`,
+      isDefault: false,
+    });
+    await apiCompleteOnboarding(authApi);
+
+    // Gerente de verdade no mesmo tenant: `paymentterms.read` sem `.manage`.
+    const manager = seedUserWithRoleDirect({
+      tenantId: tenant.tenantId,
+      role: 'Manager',
+      emailPrefix: 'gerente',
+    });
+    const anon = await playwrightRequest.newContext({
+      baseURL: BACK_URL,
+      ignoreHTTPSErrors: true,
+      extraHTTPHeaders: { 'Content-Type': 'application/json' },
+    });
+    const tokens = await loginViaApi(anon, manager.email, manager.password);
+    await anon.dispose();
+
+    const managerApi = await playwrightRequest.newContext({
+      baseURL: BACK_URL,
+      ignoreHTTPSErrors: true,
+      extraHTTPHeaders: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${tokens.accessToken}`,
+      },
+    });
+    try {
+      expect((await managerApi.get(`/api/payment-terms-templates/${template.id}`)).status()).toBe(200);
+      const deactivate = await managerApi.post(
+        `/api/payment-terms-templates/${template.id}/deactivate`,
+      );
+      expect(deactivate.status()).toBe(403);
+      const activate = await managerApi.post(`/api/payment-terms-templates/${template.id}/activate`);
+      expect(activate.status()).toBe(403);
+    } finally {
+      await managerApi.dispose();
+    }
+    expect((await apiGetTemplate(authApi, template.id)).status).toBe('Active');
+
+    await authPage.addInitScript(
+      ({ access, refresh }) => {
+        localStorage.setItem('access_token', access);
+        localStorage.setItem('refresh_token', refresh);
+      },
+      { access: tokens.accessToken, refresh: tokens.refreshToken },
+    );
+    await authPage.goto('/app/settings/payment-terms');
+    await expect(authPage.getByTestId(`payment-terms-status-${template.id}`)).toHaveText('Ativo', {
+      timeout: 15_000,
+    });
+    await expect(authPage.getByTestId(`payment-terms-toggle-${template.id}`)).toHaveCount(0);
   });
 });

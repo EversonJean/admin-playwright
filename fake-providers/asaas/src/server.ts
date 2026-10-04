@@ -28,6 +28,25 @@ await createFakeServer({
       return { reset: true };
     });
 
+    // Muda o status do payment SEM disparar webhook: o "webhook perdido" da
+    // reconciliacao (Etapa 201). O back so descobre pelo GET /payments/:id.
+    app.post<{ Body: { paymentId: string; status: string } }>(
+      '/_control/payment-status',
+      async (req, reply) => {
+        const { paymentId, status } = req.body ?? ({} as { paymentId: string; status: string });
+        const paid = status === 'CONFIRMED' || status === 'RECEIVED';
+        const updated = state.updatePayment(paymentId, {
+          status,
+          ...(paid ? { paymentDate: new Date().toISOString().slice(0, 10) } : {}),
+        });
+        if (!updated) {
+          reply.status(404);
+          return { error: `payment ${paymentId} not found` };
+        }
+        return { payment: updated };
+      },
+    );
+
     app.get<{ Querystring: { email?: string } }>(
       '/customers',
       async (req) => {

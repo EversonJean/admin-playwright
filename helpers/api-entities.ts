@@ -25,6 +25,27 @@ export interface CreatedEntity {
   [key: string]: unknown;
 }
 
+/**
+ * Cria `count` entidades em lotes paralelos de `batchSize`, na ordem do
+ * índice (1-based) — para pré-condição de "catálogo maior que uma página"
+ * sem 150 requests em série nem 150 de uma vez contra o rate limit.
+ */
+export async function createInBatches<T>(
+  count: number,
+  create: (index: number) => Promise<T>,
+  batchSize = 10,
+): Promise<T[]> {
+  const created: T[] = [];
+  for (let start = 1; start <= count; start += batchSize) {
+    const end = Math.min(count, start + batchSize - 1);
+    const batch = await Promise.all(
+      Array.from({ length: end - start + 1 }, (_, k) => create(start + k)),
+    );
+    created.push(...batch);
+  }
+  return created;
+}
+
 /** POST /api/clients */
 export async function apiCreateClient(
   api: APIRequestContext,
@@ -69,6 +90,29 @@ export async function apiCreateActivity(api: APIRequestContext, overrides: Parti
   return body.data ?? body;
 }
 
+/**
+ * POST /api/products — produto consumível ativo, sem vínculo com atividade.
+ * Nome único por `Date.now()` quando o teste não passa um.
+ */
+export async function apiCreateProduct(
+  api: APIRequestContext,
+  overrides: { name?: string; unitCost?: number; isReusable?: boolean } = {},
+): Promise<CreatedEntity & { name: string }> {
+  const res = await api.post('/api/products', {
+    data: {
+      name: overrides.name ?? `Produto E2E ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      category: 'Materiais',
+      unit: 'un',
+      unitCost: overrides.unitCost ?? 1.5,
+      isReusable: overrides.isReusable ?? false,
+      activityProducts: [],
+    },
+  });
+  await expectOk(res, 'apiCreateProduct');
+  const body = await res.json();
+  return body.data ?? body;
+}
+
 /** POST /api/collaborators */
 export async function apiCreateCollaborator(api: APIRequestContext, overrides: Partial<ReturnType<typeof fakeCollaborator>> = {}): Promise<CreatedEntity> {
   const fake = { ...fakeCollaborator(), ...overrides };
@@ -96,6 +140,20 @@ export async function apiCreateCollaborator(api: APIRequestContext, overrides: P
 export async function apiCompleteOnboarding(api: APIRequestContext): Promise<void> {
   const res = await api.post('/api/company/complete-onboarding');
   await expectOk(res, 'apiCompleteOnboarding');
+}
+
+/**
+ * PUT /api/settings/parameters/{key} — grava o parâmetro do tenant (tela
+ * Configurações → Parâmetros). O valor vai como texto, igual à tela; o back
+ * converte pelo tipo do catálogo (`SettingDefinitions`).
+ */
+export async function apiSetSettingParameter(
+  api: APIRequestContext,
+  key: string,
+  value: string | number,
+): Promise<void> {
+  const res = await api.put(`/api/settings/parameters/${key}`, { data: { value: String(value) } });
+  await expectOk(res, `apiSetSettingParameter(${key})`);
 }
 
 /**

@@ -111,6 +111,18 @@ await createFakeServer({
       status?: 'sent' | 'delivered' | 'read' | 'failed';
       /** Pra inbound: texto recebido */
       text?: string;
+      /**
+       * Pra status: `timestamp` da Meta em segundos (default agora). Fixo, o
+       * mesmo payload pode ser reenviado byte a byte (replay de verdade).
+       */
+      timestamp?: number;
+      /** Pra status `failed`: `errors[]` no formato da Meta (code, title, error_data.details). */
+      errors?: Array<{
+        code: number;
+        title: string;
+        message?: string;
+        error_data?: { details?: string };
+      }>;
       /** Override URL (default https://localhost:1501/api/webhooks/whatsapp) */
       backUrl?: string;
     };
@@ -136,7 +148,8 @@ await createFakeServer({
                             id: body.messageId,
                             status: body.status ?? 'delivered',
                             recipient_id: body.phone.replace(/\D/g, ''),
-                            timestamp: Math.floor(Date.now() / 1000).toString(),
+                            timestamp: (body.timestamp ?? Math.floor(Date.now() / 1000)).toString(),
+                            ...(body.errors ? { errors: body.errors } : {}),
                           },
                         ],
                       }

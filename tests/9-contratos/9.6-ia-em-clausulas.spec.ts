@@ -1,5 +1,5 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
-import { enableFeatureFlagDirect } from '../../helpers/db-helper';
+import { enableFeatureFlagDirect, setSubscriptionPlanDirect } from '../../helpers/db-helper';
 import { fakeOpenAi } from '../../helpers/fake-providers';
 
 /**
@@ -17,7 +17,9 @@ test.describe('Fluxo 9.6 — IA em cláusulas', () => {
     expect(res?.status() ?? 0).toBeLessThan(500);
   });
 
-  test('@flow sem feature_ai: /api/ai/usage responde 403 Entitlement', async ({ authApi }) => {
+  test('@flow sem feature_ai: /api/ai/usage responde 403 Entitlement', async ({ authApi, tenant }) => {
+    // O teste do signup é do `plan_professional`, que já traz `feature_ai`.
+    setSubscriptionPlanDirect(tenant.tenantId, 'plan_free');
     const res = await authApi.get('/api/ai/usage');
     expect(res.status()).toBe(403);
   });

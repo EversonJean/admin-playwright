@@ -1,4 +1,4 @@
-import { APIRequestContext, request as playwrightRequest } from '@playwright/test';
+import { APIRequestContext, APIResponse, request as playwrightRequest } from '@playwright/test';
 import { CreatedEntity } from './api-entities';
 
 /**
@@ -35,6 +35,8 @@ export interface CreateBudgetInput {
   endTime?: string;
   childrenCount?: number;
   validUntilDate?: string; // default = hoje + 14
+  /** Local do evento; default fixo. Distinto por orçamento quando o teste lê a linha da lista. */
+  eventLocation?: string;
 }
 
 function todayPlus(days: number): string {
@@ -54,7 +56,7 @@ export async function apiCreateBudget(
     ...(input.eventEndDate ? { eventEndDate: input.eventEndDate } : {}),
     eventStartTime: input.startTime ?? '14:00',
     eventEndTime: input.endTime ?? '18:00',
-    eventLocation: 'Salão de festas E2E, Curitiba',
+    eventLocation: input.eventLocation ?? 'Salão de festas E2E, Curitiba',
     childrenCount: input.childrenCount ?? 15,
     validUntil: input.validUntilDate ?? todayPlus(14),
     teamSize: 2,
@@ -314,7 +316,8 @@ export async function apiGetPaymentSummary(
   return unwrap(await res.json()) as PaymentSummary;
 }
 
-export type PaymentMethod = 'Pix' | 'Cash' | 'Transfer' | 'Card' | 'Other';
+/** Etapa 198 — `Credit` paga com o saldo de um crédito do cliente (`creditBalanceId`). */
+export type PaymentMethod = 'Pix' | 'Cash' | 'Transfer' | 'Card' | 'Other' | 'Credit';
 
 /**
  * Etapa 160 — o POST devolve a LISTA de lançamentos criados: um valor acima do
@@ -342,21 +345,42 @@ export async function apiRegisterPayment(
      * valor INTEIRO como extra, deixando a dívida intocada.
      */
     entireAmountIsExtra?: boolean;
+    /** Etapa 198 — obrigatório com `method: 'Credit'`, proibido nas outras formas. */
+    creditBalanceId?: string;
   },
 ): Promise<RegisterPaymentResult> {
   const res = await api.post(`/api/events/${eventId}/payments`, {
-    data: {
-      paidAt: payload.paidAt ?? todayPlus(0),
-      amount: payload.amount,
-      method: payload.method,
-      note: payload.note ?? null,
-      installmentId: payload.installmentId ?? null,
-      extraKind: payload.extraKind ?? null,
-      entireAmountIsExtra: payload.entireAmountIsExtra ?? false,
-    },
+    data: registerPaymentBody(payload),
   });
   await expectOk(res, 'apiRegisterPayment');
   return unwrap(await res.json()) as RegisterPaymentResult;
+}
+
+/**
+ * Corpo do `POST /api/events/{id}/payments` com os defaults do
+ * `apiRegisterPayment` — para o cenário negativo mandar o mesmo corpo por
+ * outro contexto (portal, outro tenant) e ler o status sem lançar.
+ */
+export function registerPaymentBody(payload: {
+  amount: number;
+  method: PaymentMethod;
+  paidAt?: string;
+  note?: string;
+  installmentId?: string;
+  extraKind?: Exclude<PaymentEntryKind, 'Regular'>;
+  entireAmountIsExtra?: boolean;
+  creditBalanceId?: string;
+}): Record<string, unknown> {
+  return {
+    paidAt: payload.paidAt ?? todayPlus(0),
+    amount: payload.amount,
+    method: payload.method,
+    note: payload.note ?? null,
+    installmentId: payload.installmentId ?? null,
+    extraKind: payload.extraKind ?? null,
+    entireAmountIsExtra: payload.entireAmountIsExtra ?? false,
+    creditBalanceId: payload.creditBalanceId ?? null,
+  };
 }
 
 // ──────────────────────── Devoluções (FinancialAdjustments) ────────────────────────
@@ -386,6 +410,68 @@ export async function apiRefundInstallment(
     data: { installmentId, amount, reason, notes: null },
   });
   await expectOk(res, 'apiRefundInstallment');
+}
+
+// ──────────────────────── Crédito do cliente (Etapa 198) ────────────────────────
+
+/** Espelha `CreditBalanceDto` do back. `expiresAt` é `yyyy-MM-dd` ou null (sem validade). */
+export interface CreditBalanceItem {
+  id: string;
+  clientId: string;
+  originEventId: string;
+  originAdjustmentId: string;
+  originalAmount: number;
+  usedAmount: number;
+  balance: number;
+  status: string;
+  expiresAt: string | null;
+}
+
+/**
+ * POST .../financial-adjustments/credit — devolve ao cliente, como crédito, um
+ * valor já pago na parcela. Sem `expiresAt`, a validade sai do parâmetro
+ * `CREDIT_DEFAULT_DUE_DAYS` do tenant. Devolve a resposta crua: o teto
+ * (`CreditBalance.MaxBalanceExceeded`) é cenário de teste, não de setup.
+ */
+export async function apiTryIssueCredit(
+  api: APIRequestContext,
+  eventId: string,
+  input: { installmentId: string; amount: number; expiresAt?: string; reason?: string },
+): Promise<APIResponse> {
+  return api.post(`/api/events/${eventId}/financial-adjustments/credit`, {
+    data: {
+      installmentId: input.installmentId,
+      amount: input.amount,
+      reason: input.reason ?? 'Crédito E2E',
+      notes: null,
+      expiresAt: input.expiresAt ?? null,
+    },
+  });
+}
+
+/** Igual ao `apiTryIssueCredit`, mas lança se o back recusar. */
+export async function apiIssueCredit(
+  api: APIRequestContext,
+  eventId: string,
+  input: { installmentId: string; amount: number; expiresAt?: string; reason?: string },
+): Promise<CreatedEntity> {
+  const res = await apiTryIssueCredit(api, eventId, input);
+  await expectOk(res, 'apiIssueCredit');
+  return unwrap(await res.json());
+}
+
+/** GET /api/clients/{clientId}/credit-balances — `usableOnly` é a lista da forma "Crédito". */
+export async function apiListClientCredits(
+  api: APIRequestContext,
+  clientId: string,
+  usableOnly = false,
+): Promise<CreditBalanceItem[]> {
+  const res = await api.get(
+    `/api/clients/${clientId}/credit-balances${usableOnly ? '?usableOnly=true' : ''}`,
+  );
+  await expectOk(res, 'apiListClientCredits');
+  const data = unwrap<CreditBalanceItem[] | { items?: CreditBalanceItem[] }>(await res.json());
+  return Array.isArray(data) ? data : data.items ?? [];
 }
 
 // ──────────────────────── Payment plan (parcelas) ────────────────────────
@@ -448,11 +534,17 @@ export async function apiRecomputePaymentPlan(
  * Lista de pendências. Back devolve `{ items: PagedList, totalPendingBalance }`
  * onde `PagedList` é `{ items: T[], total, page, pageSize }`. Helper retorna
  * só a página corrente já desempacotada pra uso direto.
+ *
+ * `clientId` usa o filtro da própria tela: enquanto a SEG-G item 0
+ * (PLANO-SEGURANCA) não sai, a lista traz eventos de todos os tenants do banco
+ * E2E, e o evento do teste não cabe na primeira página.
  */
 export async function apiListPendingPayments(
   api: APIRequestContext,
+  filter: { clientId?: string } = {},
 ): Promise<{ items: Array<{ eventId: string; balance: number }>; totalPendingBalance: number }> {
-  const res = await api.get('/api/events/pending-payments');
+  const query = filter.clientId ? `?clientId=${encodeURIComponent(filter.clientId)}` : '';
+  const res = await api.get(`/api/events/pending-payments${query}`);
   await expectOk(res, 'apiListPendingPayments');
   const body = unwrap<{
     items: { items: Array<{ eventId: string; balance: number }> };

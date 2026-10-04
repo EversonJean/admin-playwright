@@ -1,6 +1,7 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
-import { apiCreateClient, apiCreateCollaborator } from '../../helpers/api-entities';
+import { apiCompleteOnboarding, apiCreateCollaborator } from '../../helpers/api-entities';
+import { assertOk, readJson } from '../../helpers/response';
 
 /**
  * Fluxo: 9.5 — Outros tipos de contrato (parceiro, colaborador)
@@ -8,6 +9,11 @@ import { apiCreateClient, apiCreateCollaborator } from '../../helpers/api-entiti
  */
 
 test.describe('Fluxo 9.5 — Contratos parceiro e colaborador', () => {
+  // Tenant recém-criado cai no assistente de configuração (onboardingGuard).
+  test.beforeEach(async ({ authApi }) => {
+    await apiCompleteOnboarding(authApi);
+  });
+
   test('@flow listagem de contratos de parceiro carrega autenticada', async ({ authPage }) => {
     await smokeRoute(authPage, '/app/contracts/partner/list');
   });
@@ -28,26 +34,30 @@ test.describe('Fluxo 9.5 — Contratos parceiro e colaborador', () => {
     authPage,
     authApi,
   }) => {
-    // Form filtra clientes por type=PJ — precisa criar PJ antes
-    await apiCreateClient(authApi, {
-      type: 'PJ',
-      document: '11222333000181', // CNPJ válido
+    // O form busca entre os PARCEIROS ativos (`isPartner`, Etapa 183) pelo
+    // autocomplete (Etapa 195, E3): o parceiro nasce com o flag.
+    const partnerName = `Salão Parceiro ${Date.now()}`;
+    const created = await authApi.post('/api/clients', {
+      data: {
+        type: 'PJ',
+        name: partnerName,
+        document: '11222333000181', // CNPJ válido
+        phone: '41999990000',
+        isPartner: true,
+        partnerCategory: 'Buffet',
+      },
     });
+    await assertOk(created, 'criar parceiro');
+    const partnerId = (await readJson<{ id: string }>(created)).id;
 
-    // Aguarda GET de clientes resolver ANTES de abrir o select pra evitar
-    // pegar mat-option de painel anterior aberto / lista vazia.
-    const clientsLoadedPromise = authPage.waitForResponse(
-      (r) => r.url().includes('/api/clients') && r.request().method() === 'GET',
-      { timeout: 10_000 },
-    );
     await authPage.goto('/app/contracts/partner/new');
-    await clientsLoadedPromise;
-    // mat-label flutua sobre o trigger e intercepta cliques — usa keyboard.
-    const partnerSelect = authPage.getByTestId('partner-contract-form-partnerId');
-    await expect(partnerSelect).toBeVisible();
-    await partnerSelect.focus();
-    await authPage.keyboard.press('Enter');
-    await authPage.locator('mat-option:not([aria-disabled="true"])').first().click();
+    const partnerInput = authPage.getByTestId('partner-contract-form-partnerId');
+    await partnerInput.click();
+    await partnerInput.fill(partnerName);
+    const partnerOption = authPage.getByTestId(`partner-contract-form-partnerId-option-${partnerId}`);
+    await expect(partnerOption).toBeVisible({ timeout: 10_000 });
+    await partnerOption.click();
+    await expect(partnerInput).toHaveValue(partnerName);
 
     // Vigência — data início obrigatória
     const hoje = new Date().toISOString().slice(0, 10);
@@ -72,19 +82,20 @@ test.describe('Fluxo 9.5 — Contratos parceiro e colaborador', () => {
     authPage,
     authApi,
   }) => {
-    await apiCreateCollaborator(authApi);
+    const collaboratorName = `Recreador Contrato ${Date.now()}`;
+    const collaborator = await apiCreateCollaborator(authApi, { name: collaboratorName });
 
-    const collabsLoadedPromise = authPage.waitForResponse(
-      (r) => r.url().includes('/api/collaborators') && r.request().method() === 'GET',
-      { timeout: 10_000 },
-    );
+    // Escolha pelo autocomplete (Etapa 195, E3).
     await authPage.goto('/app/contracts/collaborator/new');
-    await collabsLoadedPromise;
-    const collabSelect = authPage.getByTestId('collaborator-contract-form-collaboratorId');
-    await expect(collabSelect).toBeVisible();
-    await collabSelect.focus();
-    await authPage.keyboard.press('Enter');
-    await authPage.locator('mat-option:not([aria-disabled="true"])').first().click();
+    const collabInput = authPage.getByTestId('collaborator-contract-form-collaboratorId');
+    await collabInput.click();
+    await collabInput.fill(collaboratorName);
+    const collabOption = authPage.getByTestId(
+      `collaborator-contract-form-collaboratorId-option-${collaborator.id}`,
+    );
+    await expect(collabOption).toBeVisible({ timeout: 10_000 });
+    await collabOption.click();
+    await expect(collabInput).toHaveValue(collaboratorName);
 
     const hoje = new Date().toISOString().slice(0, 10);
     await authPage.getByTestId('collaborator-contract-form-startDate').fill(hoje);

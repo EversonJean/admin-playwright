@@ -1,6 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
-import { apiCreateActivity, apiListActivities } from '../../helpers/api-entities';
+import { apiCompleteOnboarding, apiCreateActivity, apiListActivities } from '../../helpers/api-entities';
 
 /**
  * Fluxo: 2.1 — Atividades
@@ -8,6 +8,11 @@ import { apiCreateActivity, apiListActivities } from '../../helpers/api-entities
  */
 
 test.describe('Fluxo 2.1 — Atividades', () => {
+  // Tenant recém-criado cai no assistente de configuração (onboardingGuard).
+  test.beforeEach(async ({ authApi }) => {
+    await apiCompleteOnboarding(authApi);
+  });
+
   test('@flow tela de listagem carrega autenticada', async ({ authPage }) => {
     await smokeRoute(authPage, '/app/activities/list');
   });

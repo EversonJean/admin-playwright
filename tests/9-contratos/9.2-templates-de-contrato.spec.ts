@@ -1,5 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 
 /**
  * Fluxo: 9.2 — Templates de contrato
@@ -7,6 +8,11 @@ import { smokeRoute } from '../../helpers/smoke';
  */
 
 test.describe('Fluxo 9.2 — Templates de contrato', () => {
+  // Tenant recém-criado cai no assistente de configuração (onboardingGuard).
+  test.beforeEach(async ({ authApi }) => {
+    await apiCompleteOnboarding(authApi);
+  });
+
   test('@flow listagem de templates carrega autenticada', async ({ authPage }) => {
     await smokeRoute(authPage, '/app/contract-templates/list');
   });

@@ -58,6 +58,18 @@ export function setBudgetStatusDirect(budgetId: string, status: string): void {
 }
 
 /**
+ * Crédito do cliente vencido sem esperar o calendário: o back recusa emitir
+ * crédito com validade no passado (`FinancialAdjustment.CreditExpiresInPast`),
+ * então o vencimento de pré-condição é gravado direto. O status fica como
+ * está (`Available`): é a data que decide, como no back até o `expire-due` rodar.
+ */
+export function setCreditExpiresAtDirect(creditBalanceId: string, isoDate: string): void {
+  const safeId = creditBalanceId.replace(/'/g, "''");
+  const safeDate = isoDate.replace(/'/g, "''");
+  execSql(`UPDATE "CreditBalances" SET "ExpiresAt" = '${safeDate}' WHERE "Id" = '${safeId}';`);
+}
+
+/**
  * Habilita um entitlement (feature flag bool) para um tenant via INSERT direto
  * em AddonActivations. Usado pra testar telas com `entitlementGuard` no front
  * (feature_leads, feature_equipment_rental, feature_stock, feature_ai,
@@ -229,6 +241,113 @@ export function getEventFormPublicTokenDirect(eventId: string): string {
     throw new Error(`Event ${eventId} sem FormPublicToken (ou nao existe)`);
   }
   return token;
+}
+
+/**
+ * Fuso do tenant e fim do período de teste N dias depois de HOJE NO FUSO DELE
+ * (meio-dia local). Sem endpoint: o fim do teste nasce no signup (14 dias) e só
+ * o Super Admin o estende. O e-mail de fim do teste (Etapa 201) conta os dias
+ * pelo calendário do tenant, então a data é montada no fuso informado.
+ */
+export function setTrialEndDirect(tenantId: string, timezone: string, daysFromTenantToday: number): void {
+  const safeTenant = tenantId.replace(/'/g, "''");
+  const safeTz = timezone.replace(/'/g, "''");
+  const days = Math.trunc(daysFromTenantToday);
+  execSql(`
+    UPDATE "Tenants" SET "Timezone" = '${safeTz}', "UpdatedAt" = now() WHERE "Id" = '${safeTenant}';
+    UPDATE "Subscriptions"
+       SET "TrialEndsAt" = (((now() AT TIME ZONE '${safeTz}')::date + ${days}) + time '12:00') AT TIME ZONE '${safeTz}',
+           "UpdatedAt" = now()
+     WHERE "TenantId" = '${safeTenant}' AND "Status" <> 'Canceled';
+  `);
+}
+
+/**
+ * Assinatura do tenant como paga (`Active`, prazo de 30 dias). Sem endpoint de
+ * tenant para isso: contratar passa pelo Asaas e pelo Super Admin.
+ * `keepTrialEndsAt` deixa a data do teste gravada — mais estrito que o real
+ * (`Subscription.Activate()` a zera), para provar que quem decide é o status.
+ */
+export function setSubscriptionActiveDirect(tenantId: string, opts: { keepTrialEndsAt?: boolean } = {}): void {
+  const safeTenant = tenantId.replace(/'/g, "''");
+  execSql(`
+    UPDATE "Subscriptions"
+       SET "Status" = 'Active',
+           "ExpiresAt" = now() + interval '30 days',
+           ${opts.keepTrialEndsAt ? '' : '"TrialEndsAt" = NULL,'}
+           "UpdatedAt" = now()
+     WHERE "TenantId" = '${safeTenant}' AND "Status" <> 'Canceled';
+  `);
+}
+
+/**
+ * Troca o plano da assinatura vigente do tenant, pelo código (`plan_free`,
+ * `plan_essential`…). O signup nasce em teste do `plan_professional`, que já
+ * traz `feature_ai`: o tenant "sem IA" de um gate de entitlement é o do
+ * `plan_free`. O `EntitlementService` não tem cache, então vale no próximo request.
+ */
+export function setSubscriptionPlanDirect(tenantId: string, planCode: string): void {
+  const safeTenant = tenantId.replace(/'/g, "''");
+  const safeCode = planCode.replace(/'/g, "''");
+  execSql(`
+    UPDATE "Subscriptions"
+       SET "PlanId" = (SELECT "Id" FROM "Plans" WHERE "Code" = '${safeCode}'),
+           "UpdatedAt" = now()
+     WHERE "TenantId" = '${safeTenant}' AND "Status" <> 'Canceled';
+  `);
+}
+
+/**
+ * Fatura vencida sem esperar o calendário: a fatura que nasce do webhook do
+ * Asaas é emitida "agora" e o domínio recusa vencimento anterior à emissão
+ * (`Invoice.Create`), então o vencimento passado da pré-condição é gravado
+ * direto, pela id do payment no Asaas. Mesmo desenho do `setCreditExpiresAtDirect`.
+ */
+export function setInvoiceDueDateDirect(asaasPaymentId: string, isoDate: string): void {
+  const safeId = asaasPaymentId.replace(/'/g, "''");
+  const safeDate = isoDate.replace(/'/g, "''");
+  execSql(
+    `UPDATE "Invoices" SET "DueDate" = '${safeDate}', "UpdatedAt" = now() WHERE "AsaasPaymentId" = '${safeId}';`,
+  );
+}
+
+/**
+ * Formulário pós-aceite respondido com "festa ao ar livre e descoberta". O
+ * `PATCH /api/events/{id}/form-data` devolve 409 na PRIMEIRA gravação do
+ * formulário (achado do e2e de 2026-10-04: o AppService faz `AddAsync` e depois
+ * `Update` da mesma entidade nova), então a pré-condição vai direto no banco.
+ */
+export function seedOpenAirFormDataDirect(eventId: string): void {
+  const safeId = eventId.replace(/'/g, "''");
+  execSql(`
+    INSERT INTO "PostApprovalFormData"
+      ("Id", "TenantId", "EventId", "IsCovered", "IsIndoor", "IsConfirmed",
+       "LastFilledAt", "CreatedAt", "UpdatedAt", "IsDeleted", "ReengagementConsent")
+    SELECT gen_random_uuid(), e."TenantId", e."Id", false, false, false,
+           now(), now(), now(), false, false
+      FROM "Events" e WHERE e."Id" = '${safeId}';
+  `);
+}
+
+/**
+ * Endereço estruturado do evento (cidade e UF do argumento, o resto fixo).
+ * Evento aberto ao público nasce só com o texto de `location` e não há
+ * endpoint que grave o endereço dele (o do evento comercial vem do aceite do
+ * orçamento). Todos os campos obrigatórios do `Address` vão preenchidos: com
+ * algum nulo, o EF materializa o endereço como ausente.
+ */
+export function setEventAddressDirect(eventId: string, city: string, state: string): void {
+  const safeId = eventId.replace(/'/g, "''");
+  const safeCity = city.replace(/'/g, "''");
+  const safeState = state.replace(/'/g, "''");
+  execSql(`
+    UPDATE "Events"
+       SET "Address_ZipCode" = '80010-000', "Address_Street" = 'Rua XV de Novembro',
+           "Address_Number" = '1000', "Address_Neighborhood" = 'Centro',
+           "Address_City" = '${safeCity}', "Address_State" = '${safeState}',
+           "Address_Country" = 'BR', "UpdatedAt" = now()
+     WHERE "Id" = '${safeId}';
+  `);
 }
 
 /**

@@ -1,6 +1,7 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { enableFeatureFlagDirect } from '../../helpers/db-helper';
-import { apiCreateActivity } from '../../helpers/api-entities';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
+import { assertOk, readJson } from '../../helpers/response';
 
 /**
  * Fluxo: 15.1 — Locação de equipamentos
@@ -61,6 +62,80 @@ test.describe('Fluxo 15.1 — Locação de equipamentos', () => {
     const items = body.data?.items ?? body.items ?? body.data ?? body;
     const arr = Array.isArray(items) ? items : items.items ?? [];
     expect(arr.some((e: { name?: string }) => e.name === nome)).toBe(true);
+  });
+
+  /**
+   * E9 do PLANO-AJUSTES-DA-CONVERSAO (revisão pós-entrega da Etapa 195, D20):
+   * o autocomplete "Adicionar unidade" mostra o NOME DO TIPO como rótulo, então
+   * o usuário procura por ele. O `Search` do read de unidades passou a comparar
+   * também o nome do tipo; antes, digitar "Cama elástica" não achava nada.
+   */
+  test('@flow "Add unit" finds the unit by typing the equipment type name (D20)', async ({
+    authApi,
+    authPage,
+    tenant,
+  }) => {
+    enableFeatureFlagDirect(tenant.tenantId, 'feature_equipment_rental');
+    await apiCompleteOnboarding(authApi);
+
+    const stamp = Date.now();
+    const typeName = `Cama elástica E2E ${stamp}`;
+    const typeRes = await authApi.post('/api/equipment-types', {
+      data: {
+        name: typeName,
+        code: `CE${stamp}`,
+        category: 'Trampoline',
+        requiresPower: false,
+        setupTimeMinutes: 20,
+        teardownTimeMinutes: 15,
+        minMonitors: 1,
+        pricing: {
+          basePriceDaily: 200,
+          basePriceHourly: 35,
+          extraHourPrice: 25,
+          setupFee: 0,
+          deliveryFeePerKm: 2,
+          depositAmount: 0,
+          lateReturnFeePerHour: 30,
+          damageFeeMinimum: 100,
+        },
+        setupRequirements: [],
+        description: 'Tipo do E9',
+      },
+    });
+    await assertOk(typeRes, 'POST /api/equipment-types');
+    const type = await readJson<{ id: string }>(typeRes);
+
+    // O código do patrimônio não contém o nome do tipo: só a busca pelo tipo acha.
+    const assetCode = `PAT-${stamp}`;
+    const unitRes = await authApi.post('/api/equipment-units', {
+      data: {
+        equipmentTypeId: type.id,
+        assetCode,
+        acquisitionDate: new Date().toISOString().slice(0, 10),
+        acquisitionCost: 1500,
+        condition: 'Good',
+      },
+    });
+    await assertOk(unitRes, 'POST /api/equipment-units');
+    const unit = await readJson<{ id: string }>(unitRes);
+
+    await authPage.goto('/app/rentals/new');
+    await authPage.getByRole('tab', { name: 'Itens', exact: true }).click();
+
+    const addUnit = authPage.getByTestId('rental-add-unit');
+    await addUnit.click();
+    await addUnit.fill('Cama elástica');
+    const option = authPage.getByTestId(`rental-add-unit-option-${unit.id}`);
+    await expect(option).toBeVisible({ timeout: 10_000 });
+    await expect(option).toContainText(typeName);
+    await option.click();
+
+    // Seletor de ação: a unidade entra na lista e o campo volta vazio.
+    const item = authPage.getByTestId('rental-item-0');
+    await expect(item).toContainText(typeName);
+    await expect(item).toContainText(assetCode);
+    await expect(addUnit).toHaveValue('');
   });
 
   test('@crud cria movimentação de estoque via API (feature_stock) e valida saldo', async ({

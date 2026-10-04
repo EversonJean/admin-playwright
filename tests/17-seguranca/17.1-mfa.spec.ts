@@ -1,6 +1,7 @@
 import { generateSync } from 'otplib';
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 
 /**
  * Fluxo: 17.1 — MFA (TOTP + Email OTP + Backup codes)
@@ -11,6 +12,11 @@ import { smokeRoute } from '../../helpers/smoke';
  */
 
 test.describe('Fluxo 17.1 — MFA', () => {
+  // Tenant recém-criado cai no assistente de configuração (onboardingGuard).
+  test.beforeEach(async ({ authApi }) => {
+    await apiCompleteOnboarding(authApi);
+  });
+
   test('@flow tela de segurança carrega autenticada', async ({ authPage }) => {
     await smokeRoute(authPage, '/app/settings/security');
   });

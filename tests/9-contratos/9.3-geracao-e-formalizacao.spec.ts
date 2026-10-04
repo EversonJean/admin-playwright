@@ -1,3 +1,4 @@
+import { APIRequestContext, Page } from '@playwright/test';
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { apiCreateActivity, apiCreateClient } from '../../helpers/api-entities';
 import {
@@ -7,8 +8,61 @@ import {
   createPublicApiContext,
   extractTokenFromPublicUrl,
 } from '../../helpers/api-event-flow';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 import { fakeClicksign } from '../../helpers/fake-providers';
 import { enableFeatureFlagDirect } from '../../helpers/db-helper';
+import { assertOk, readJson } from '../../helpers/response';
+import { setupDraftContract } from '../../helpers/setup-flows';
+
+/** Signatários que o back criou no fake desde `since` (POST /signers). */
+async function signersSince(since: string) {
+  const inbox = await fakeClicksign.inbox({ since });
+  return inbox
+    .filter((e) => e.method === 'POST' && e.path === '/signers')
+    .map((e) => (e.body as { signer?: { name?: string; email?: string; phone_number?: string } }).signer ?? {});
+}
+
+const digits = (value: string | null | undefined) => (value ?? '').replace(/\D/g, '');
+
+/**
+ * Contrato em rascunho de um evento aceito, com o PDF gerado (o envio pede:
+ * "Gere o PDF primeiro"), e o diálogo de assinatura aberto pela aba Contrato,
+ * já conferido com o e-mail e o telefone do cliente do evento.
+ */
+async function openSendDialogWithClientContact(
+  api: APIRequestContext,
+  page: Page,
+  tenantId: string,
+): Promise<{ contractId: string; client: { name: string; email: string; phone: string } }> {
+  const { contractId, eventId, clienteId } = await setupDraftContract(api, tenantId);
+  const clientRes = await api.get(`/api/clients/${clienteId}`);
+  await assertOk(clientRes, 'GET /api/clients/{id}');
+  const client = await readJson<{ name: string; email: string; phone: string }>(clientRes);
+  await assertOk(await api.get(`/api/contracts/${contractId}/pdf`), 'GET /api/contracts/{id}/pdf');
+
+  await apiCompleteOnboarding(api);
+  await page.goto(`/app/events/${eventId}`);
+  await page.getByRole('tab', { name: 'Contrato', exact: true }).click();
+  await page.getByTestId('contract-tab-send-digital').click();
+
+  await expect(page.getByTestId('send-digital-signer-email')).toHaveValue(client.email);
+  const phoneField = page.getByTestId('send-digital-signer-phone');
+  await expect(phoneField).not.toHaveValue('');
+  expect(digits(await phoneField.inputValue())).toBe(digits(client.phone));
+  return { contractId, client };
+}
+
+/** Clica em "Enviar para assinatura" e devolve o status HTTP e o corpo do envio. */
+async function submitSend(page: Page, contractId: string): Promise<{ status: number; body: string }> {
+  const response = page.waitForResponse(
+    (r) =>
+      r.url().includes(`/api/contracts/${contractId}/digital-signature/send`) &&
+      r.request().method() === 'POST',
+  );
+  await page.getByTestId('send-digital-submit').click();
+  const res = await response;
+  return { status: res.status(), body: (await res.text()).slice(0, 300) };
+}
 
 /**
  * Fluxo: 9.3 — Geração e formalização de contrato
@@ -84,7 +138,8 @@ test.describe('Fluxo 9.3 — Geração e formalização', () => {
       data: {
         title: `Clausula E2E ${Date.now()}`,
         category: 'Geral',
-        applicableTo: 'ClientIndividual',
+        // `ClauseApplicability` é flags e o DTO recebe o número (1 = pessoa física).
+        applicableTo: 1,
         isRequired: false,
         suggestedOrder: 1,
         bodyHtml: '<p>Cláusula de teste.</p>',
@@ -174,5 +229,81 @@ test.describe('Fluxo 9.3 — Geração e formalização', () => {
     expect(finalRes.ok()).toBe(true);
     const finalContract = (await finalRes.json()).data ?? (await finalRes.json());
     expect(finalContract.status).toBe('Formalized');
+  });
+
+  /**
+   * E38 (PLANO-AJUSTES-DA-CONVERSAO §12 item 3, Etapa 203): o signatário vai
+   * ao Clicksign com nome, e-mail e telefone; o diálogo de envio já vem com o
+   * e-mail e o telefone do cliente do evento.
+   */
+  test('@crud send for digital signature with the event client e-mail and phone prefilled: the fake receives name, e-mail and phone', async ({
+    authApi,
+    authPage,
+    tenant,
+  }) => {
+    const { contractId, client } = await openSendDialogWithClientContact(authApi, authPage, tenant.tenantId);
+
+    // WhatsApp: o canal que precisa do telefone pré-preenchido.
+    await authPage.getByTestId('send-digital-channel').click();
+    await authPage.getByTestId('send-digital-channel-whatsapp').click();
+
+    const since = new Date().toISOString();
+    const sent = await submitSend(authPage, contractId);
+    expect(sent.status, sent.body).toBe(200);
+    await expect(authPage.getByTestId('send-digital-submit')).toHaveCount(0, { timeout: 20_000 });
+
+    const signer = (await signersSince(since)).find((s) => s.email === client.email);
+    expect(signer, 'o fake recebeu o signatário com o e-mail do cliente').toBeTruthy();
+    expect(signer!.name).toBe(client.name);
+    expect(digits(signer!.phone_number)).toContain(digits(client.phone));
+
+    await assertOk(
+      await authApi.get(`/api/contracts/${contractId}/digital-signature`),
+      'GET digital-signature envelope',
+    );
+  });
+
+  test('@crud send for digital signature with the default channel ("Padrão da empresa") and the prefilled contact goes through', async ({
+    authApi,
+    authPage,
+    tenant,
+  }) => {
+    const { contractId, client } = await openSendDialogWithClientContact(authApi, authPage, tenant.tenantId);
+
+    // Sem tocar no canal: o diálogo diz "Em branco usa o canal padrão configurado".
+    const since = new Date().toISOString();
+    const sent = await submitSend(authPage, contractId);
+    expect(sent.status, `envio com o canal padrão da empresa: ${sent.body}`).toBe(200);
+
+    const signer = (await signersSince(since)).find((s) => s.email === client.email);
+    expect(signer, 'o fake recebeu o signatário com o e-mail do cliente').toBeTruthy();
+    expect(digits(signer!.phone_number)).toContain(digits(client.phone));
+  });
+
+  test('@crud WhatsApp delivery without a phone is refused before reaching the fake', async ({
+    authApi,
+    tenant,
+  }) => {
+    const { contractId } = await setupDraftContract(authApi, tenant.tenantId);
+    const signerEmail = `sem-telefone-${Date.now()}@e2e.test`;
+
+    const since = new Date().toISOString();
+    const res = await authApi.post(`/api/contracts/${contractId}/digital-signature/send`, {
+      data: {
+        signerName: 'Cliente sem telefone',
+        signerEmail,
+        signerPhone: null,
+        deliveryChannel: 'whatsapp',
+        message: null,
+      },
+    });
+    const body = await res.text();
+    expect(res.status(), body.slice(0, 300)).toBe(400);
+    expect(body).toContain('Contracts.SignatureContactRequired');
+
+    expect((await signersSince(since)).filter((s) => s.email === signerEmail)).toHaveLength(0);
+    const contractRes = await authApi.get(`/api/contracts/${contractId}`);
+    await assertOk(contractRes, 'GET /api/contracts/{id}');
+    expect((await readJson<{ status: string }>(contractRes)).status).toBe('Draft');
   });
 });

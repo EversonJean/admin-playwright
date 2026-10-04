@@ -190,6 +190,10 @@ export const fakeWhatsApp = {
     messageId?: string;
     status?: 'sent' | 'delivered' | 'read' | 'failed';
     text?: string;
+    /** Status: `timestamp` da Meta em segundos; fixo, o replay e byte a byte. */
+    timestamp?: number;
+    /** Status `failed`: motivo no formato da Meta. */
+    errors?: Array<{ code: number; title: string; message?: string; error_data?: { details?: string } }>;
   }) => triggerWebhook('whatsapp', body),
 };
 
@@ -233,6 +237,19 @@ export const fakeAsaas = {
     const api = await ctx();
     try {
       await api.delete(`${URLS.asaas}/_control/state`);
+    } finally {
+      await api.dispose();
+    }
+  },
+  /**
+   * Muda o status do payment no fake SEM webhook (o webhook perdido da
+   * reconciliacao, Etapa 201): o back so ve a mudanca pelo GET /payments/:id.
+   */
+  setPaymentStatus: async (paymentId: string, status: 'PENDING' | 'RECEIVED' | 'CONFIRMED' | 'OVERDUE') => {
+    const api = await ctx();
+    try {
+      const res = await api.post(`${URLS.asaas}/_control/payment-status`, { data: { paymentId, status } });
+      if (!res.ok()) throw new Error(`fake asaas payment-status ${res.status()}: ${await res.text()}`);
     } finally {
       await api.dispose();
     }
