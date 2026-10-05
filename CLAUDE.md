@@ -14,11 +14,14 @@ Testes ponta a ponta (Playwright + Chromium) do Recreativo 2: front Angular + ba
 
 ## Comandos
 
+Agente roda pelo `testar.js` da raiz do workspace (modo leve, confere o dono das portas, saída resumida); `npm test`, `npm run test:*` e `npx playwright test` crus são negados pelo hook `guard-git.js` do workspace. Os comandos crus abaixo ficam para quem roda à mão.
+
 ```
+node .claude/scripts/testar.js e2e tests/6-eventos/6.2-*.spec.ts   # agente: só o que mudou
+node .claude/scripts/testar.js e2e tests --grep @smoke             # agente: só @smoke
 npm test                       # tudo, headless; sobe back, front e fakes via webServer
 npm run test:ui                # modo interativo (dev de teste)
 npm run test:smoke             # só @smoke
-npx playwright test tests/6-eventos/6.2-*.spec.ts   # só o que mudou
 SKIP_WEBSERVER=true npm test   # back/front já rodando em outro terminal
 npm run db:reset
 ```
