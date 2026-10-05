@@ -270,7 +270,8 @@ test.describe('Fluxo 9.3 — Geração e formalização', () => {
   }) => {
     const { contractId, client } = await openSendDialogWithClientContact(authApi, authPage, tenant.tenantId);
 
-    // Sem tocar no canal: o diálogo diz "Em branco usa o canal padrão configurado".
+    // Sem tocar no canal ("Padrão da empresa"): o front resolve WhatsApp quando há telefone, senão e-mail
+    // (SIGNATURE_DEFAULT_METHOD = whatsapp em planejamento/19-autenticacao.md; o back exige o canal).
     const since = new Date().toISOString();
     const sent = await submitSend(authPage, contractId);
     expect(sent.status, `envio com o canal padrão da empresa: ${sent.body}`).toBe(200);
