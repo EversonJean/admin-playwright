@@ -14,11 +14,11 @@ Testes ponta a ponta (Playwright + Chromium) do Recreativo 2: front Angular + ba
 
 ## Comandos
 
-Agente roda pelo `testar.js` da raiz do workspace (modo leve, confere o dono das portas, saída resumida); `npm test`, `npm run test:*` e `npx playwright test` crus são negados pelo hook `guard-git.js` do workspace. Os comandos crus abaixo ficam para quem roda à mão.
+Agente roda pelo `run-tests.js` da raiz do workspace (modo leve, confere o dono das portas, saída resumida); `npm test`, `npm run test:*` e `npx playwright test` crus são negados pelo hook `guard-git.js` do workspace. Os comandos crus abaixo ficam para quem roda à mão.
 
 ```
-node .claude/scripts/testar.js e2e tests/6-eventos/6.2-*.spec.ts   # agente: só o que mudou
-node .claude/scripts/testar.js e2e tests --grep @smoke             # agente: só @smoke
+node .claude/scripts/run-tests.js e2e tests/6-eventos/6.2-*.spec.ts   # agente: só o que mudou
+node .claude/scripts/run-tests.js e2e tests --grep @smoke             # agente: só @smoke
 npm test                       # tudo, headless; sobe back, front e fakes via webServer
 npm run test:ui                # modo interativo (dev de teste)
 npm run test:smoke             # só @smoke
@@ -26,7 +26,7 @@ SKIP_WEBSERVER=true npm test   # back/front já rodando em outro terminal
 npm run db:reset
 ```
 
-Agente roda pelo script, não pelo `npx` cru: `node .claude/scripts/testar.js e2e <spec>[,<spec2>]` (da raiz do workspace) confere o dono das portas (para se for o outro clone), faz o `dotnet build`, roda com relatório JSON e devolve só teste, `arquivo:linha`, mensagem e o caminho do `error-context.md`, screenshot e trace de cada falha. `--checar` faz só a conferência das portas.
+Agente roda pelo script, não pelo `npx` cru: `node .claude/scripts/run-tests.js e2e <spec>[,<spec2>]` (da raiz do workspace) confere o dono das portas (para se for o outro clone), faz o `dotnet build`, roda com relatório JSON e devolve só teste, `arquivo:linha`, mensagem e o caminho do `error-context.md`, screenshot e trace de cada falha. `--check` faz só a conferência das portas.
 
 O back sobe com `--launch-profile e2e` e `appsettings.E2E.json` aponta cada integração para o fake correspondente.
 
