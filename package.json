@@ -11,7 +11,8 @@
     "fake-providers/email",
     "fake-providers/openai",
     "fake-providers/anthropic",
-    "fake-providers/google-maps"
+    "fake-providers/google-maps",
+    "fake-providers/google-calendar"
   ],
   "scripts": {
     "install:browsers": "playwright install --with-deps chromium",
@@ -29,7 +30,8 @@
     "fakes:email": "npm run start -w fake-providers/email",
     "fakes:openai": "npm run start -w fake-providers/openai",
     "fakes:anthropic": "npm run start -w fake-providers/anthropic",
-    "fakes:maps": "npm run start -w fake-providers/google-maps"
+    "fakes:maps": "npm run start -w fake-providers/google-maps",
+    "fakes:google-calendar": "npm run start -w fake-providers/google-calendar"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",

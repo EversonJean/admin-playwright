@@ -312,6 +312,19 @@ export function setInvoiceDueDateDirect(asaasPaymentId: string, isoDate: string)
 }
 
 /**
+ * Envelhece o `CreatedAt` do evento. Para métrica com carência sobre a criação
+ * (o alerta `missing-links` do SuperAdmin ignora os criados nos últimos 15 min,
+ * que ainda estariam no Outbox): sem isto o evento do spec nunca entra na conta.
+ */
+export function backdateEventCreatedAtDirect(eventId: string, minutes: number): void {
+  const safeId = eventId.replace(/'/g, "''");
+  const safeMinutes = Math.trunc(minutes);
+  execSql(
+    `UPDATE "Events" SET "CreatedAt" = "CreatedAt" - interval '${safeMinutes} minutes' WHERE "Id" = '${safeId}';`,
+  );
+}
+
+/**
  * Formulário pós-aceite respondido com "festa ao ar livre e descoberta". O
  * `PATCH /api/events/{id}/form-data` devolve 409 na PRIMEIRA gravação do
  * formulário (achado do e2e de 2026-10-04: o AppService faz `AddAsync` e depois

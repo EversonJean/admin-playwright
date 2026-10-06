@@ -51,6 +51,14 @@ function datePlus(days: number): string {
 }
 
 test.describe('Fluxo 7.3 — Parâmetros operacionais', () => {
+  // Tenant novo cai no assistente de configuração (`onboardingGuard`, Etapa
+  // 109) a cada carga de página, assim que o `/me` hidrata `isOnboarded=false`.
+  // Sem concluir a configuração, o teste corria contra esse redirect: o smoke
+  // às vezes conferia a URL antes dele, e o form nunca aparecia.
+  test.beforeEach(async ({ authApi }) => {
+    await apiCompleteOnboarding(authApi);
+  });
+
   test('@flow modalidades carrega autenticada', async ({ authPage }) => {
     await smokeRoute(authPage, '/app/settings/service-modalities');
   });
@@ -70,8 +78,6 @@ test.describe('Fluxo 7.3 — Parâmetros operacionais', () => {
   test('@crud cria modalidade via UI e valida no back', async ({ authPage, authApi }) => {
     const nome = `Modalidade E2E ${Date.now()}`;
 
-    // Sem isto o onboardingGuard leva o tenant novo ao assistente (tests/CLAUDE.md).
-    await apiCompleteOnboarding(authApi);
     await authPage.goto('/app/settings/service-modalities/new');
     await authPage.getByTestId('modality-form-name').fill(nome);
     await authPage.getByTestId('modality-form-value').fill('150');
@@ -90,7 +96,6 @@ test.describe('Fluxo 7.3 — Parâmetros operacionais', () => {
   test('@crud cria nível de colaborador via UI e valida no back', async ({ authPage, authApi }) => {
     const nome = `Nível E2E ${Date.now()}`;
 
-    await apiCompleteOnboarding(authApi);
     await authPage.goto('/app/settings/collaborator-levels/new');
     await authPage.getByTestId('level-form-name').fill(nome);
     await authPage.getByTestId('level-form-order').fill('99');
@@ -148,7 +153,6 @@ test.describe('Fluxo 7.3 — Parâmetros operacionais', () => {
     await apiAssignCollaborator(authApi, first.eventId, collaborator.id);
     await apiAssignCollaborator(authApi, second.eventId, collaborator.id);
 
-    await apiCompleteOnboarding(authApi);
     await authPage.goto(`/app/events/${third.eventId}`);
     await authPage.getByRole('tab', { name: 'Equipe', exact: true }).click();
     await authPage.getByTestId('event-detail-team-assign').click();

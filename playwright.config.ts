@@ -109,6 +109,14 @@ export default defineConfig({
           reuseExistingServer: !process.env.CI,
         },
         {
+          // PLANO-AGENDAS-EXTERNAS §12: OAuth, JWKS do id_token e Calendar API.
+          name: 'fake-google-calendar',
+          command: 'npm run fakes:google-calendar',
+          url: 'http://localhost:1517/_control/health',
+          timeout: 30_000,
+          reuseExistingServer: !process.env.CI,
+        },
+        {
           name: 'admin-backend',
           // Profile `e2e` no launchSettings.json fixa ASPNETCORE_ENVIRONMENT=E2E
           // (que carrega appsettings.E2E.json: Outbox in-memory + endpoints

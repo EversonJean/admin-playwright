@@ -15,6 +15,35 @@ e os testes consultam/disparam ações via endpoints `/_control/*`.
 | `openai/` | 1514 | OpenAI v1 (`/v1/chat/completions`) |
 | `anthropic/` | 1515 | Anthropic v1 (`/v1/messages`) |
 | `google-maps/` | 1516 | Maps API (Places autocomplete/details + DistanceMatrix) |
+| `google-calendar/` | 1517 | Google Agenda: OAuth (`/token`, `/revoke`), JWKS do id_token (`/oauth2/v3/certs`) e Calendar API v3 (`/calendar/v3/...`) |
+
+### `google-calendar/` — controle
+
+Estado por **conta** (`sub` do id_token): cada spec autoriza a sua e não enxerga
+as outras. Helper: `fakeGoogleCalendar` em `helpers/fake-providers.ts`;
+conexão pelo back em `helpers/external-calendar.ts` (`apiConnectGoogleCalendar`).
+
+- `POST /_control/authorize` `{ sub?, email?, scope?, omitRefreshToken?, omitIdToken?, idTokenAudience? }`
+  devolve `{ code, sub, email }`: o código de uso único que o "popup" do GIS daria.
+  O `connect` do back troca esse código em `/token` e recebe um id_token RS256
+  assinado pela chave do fake (o back confere pelo `Google:CertificatesUrl`).
+  O `/token` confere `client_id` e `client_secret` contra os valores de teste do
+  `appsettings.E2E.json` do back (`invalid_client`, 401) e, na troca de código,
+  `redirect_uri=postmessage` (`redirect_uri_mismatch`, 400).
+- `GET /_control/accounts/:sub`: grants, falha ativa, agendas e todos os eventos
+  (com `colorId`, `summary`, `description`, `reminders`, `visibility`,
+  `transparency`, `extendedProperties`, `status`; `cancelled` = lixeira).
+- `POST /_control/accounts/:sub/revoke`: "remover acesso" na conta Google
+  (API 401 e refresh `invalid_grant` para todos os grants da conta).
+- `PUT /_control/accounts/:sub/failure` `{ mode, times? }` / `DELETE` limpa:
+  `500` (API e token), `429`, `invalid_grant`, `401` (só API), `404calendar`.
+- `GET|DELETE /_control/calendars/:id`: lê, ou apaga a agenda "à mão".
+- `POST /_control/calendars/:id/events`: evento criado à mão (sem marcador, salvo
+  `extendedProperties` no corpo).
+- `DELETE /_control/calendars/:id/events/:eid[?purge=true]`: apagado à mão; sem
+  `purge` vai para a lixeira (PATCH restaura, insert do mesmo id dá 409), com
+  `purge` some (404).
+- `DELETE /_control/state`: limpa todas as contas (só depuração, nunca num spec).
 
 ## Contrato uniforme de cada server
 

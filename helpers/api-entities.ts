@@ -131,6 +131,33 @@ export async function apiCreateCollaborator(api: APIRequestContext, overrides: P
 }
 
 /**
+ * POST /api/packages — pacote ATIVO com as atividades dadas (estratégia
+ * `Calculated` sem desconto, 1 a 50 crianças), para o orçamento referenciar pelo `packageId`.
+ * Nome único por `Date.now()`.
+ */
+export async function apiCreatePackage(
+  api: APIRequestContext,
+  input: { activityIds: string[]; name?: string },
+): Promise<CreatedEntity & { name: string }> {
+  const res = await api.post('/api/packages', {
+    data: {
+      name: input.name ?? `Pacote E2E ${Date.now()}`,
+      minChildren: 1,
+      maxChildren: 50,
+      includedCollaborators: 2,
+      pricingStrategy: 'Calculated',
+      // `Calculated` exige o desconto (0 = soma das atividades sem abatimento).
+      discountPercentage: 0,
+      activities: input.activityIds.map((activityId) => ({ activityId, quantity: 1 })),
+      status: 'Active',
+    },
+  });
+  await expectOk(res, 'apiCreatePackage');
+  const body = await res.json();
+  return body.data ?? body;
+}
+
+/**
  * POST /api/company/complete-onboarding — marca a configuração inicial como
  * concluída. Sem isto, o `onboardingGuard` do front (Etapa 109) manda o tenant
  * recém-criado para `/app/onboarding` a cada `page.goto` (o "uma vez por
@@ -241,4 +268,23 @@ export async function apiListCollaborators(api: APIRequestContext): Promise<{ it
   await expectOk(res, 'apiListCollaborators');
   const body = await res.json();
   return body.data ?? body;
+}
+
+export interface NotificationItem {
+  id: string;
+  type: string;
+  title: string;
+  message: string;
+  contextEntityType: string | null;
+  contextEntityId: string | null;
+  createdAt: string;
+}
+
+/** GET /api/notifications — as do usuário do contexto (o sino), as 50 mais recentes. */
+export async function apiListNotifications(api: APIRequestContext): Promise<NotificationItem[]> {
+  const res = await api.get('/api/notifications?pageSize=50');
+  await expectOk(res, 'apiListNotifications');
+  const body = await res.json();
+  const data = body.data ?? body;
+  return (Array.isArray(data) ? data : data.items) as NotificationItem[];
 }

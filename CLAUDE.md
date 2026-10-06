@@ -8,7 +8,7 @@ Testes ponta a ponta (Playwright + Chromium) do Recreativo 2: front Angular + ba
 |---|---|---|
 | `tests/<N>-<area>/` | specs numerados por área de negócio; `0-infra` é transversal | sim |
 | `fixtures/` | `tenantTest` (tenant + admin novos por teste), `authTest` (página e API autenticadas), `twoTenantsTest` (isolamento), `superAdminTest` | — |
-| `helpers/` | `api-client` (contexto HTTP, signup+confirmação), `api-entities` (`apiCreateClient`, `apiCreateActivity`… criam pré-condição via API), `api-event-flow`, `setup-flows`, `smoke` (`smokeRoute`), `test-data` (`fake*`), `db-helper`, `fake-providers` (controle dos fakes), `response`, `types` | — |
+| `helpers/` | `api-client` (contexto HTTP, signup+confirmação), `api-entities` (`apiCreateClient`, `apiCreateActivity`… criam pré-condição via API), `api-event-flow`, `setup-flows`, `external-calendar` (conectar o Google pelo fake, com step-up), `smoke` (`smokeRoute`), `test-data` (`fake*`), `db-helper`, `fake-providers` (controle dos fakes), `response` (`readJson`, `assertOk`, `apiErrorCodes`, `unwrapList`), `ui` (`snack`), `types` | — |
 | `fake-providers/` | um servidor Fastify por provedor externo, com `/_control/*` | sim |
 | `scripts/` | `db-reset.js`, `gen-stubs.js` | — |
 

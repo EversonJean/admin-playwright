@@ -116,7 +116,14 @@ export async function createFakeServer(
 
   opts.registerRoutes(app, dispatcher);
 
-  await app.listen({ port: opts.port, host: '0.0.0.0' });
+  // Só loopback: o back E2E, o Playwright e o `helpers/fake-providers.ts` falam
+  // com os fakes por `localhost`. Em `0.0.0.0` qualquer máquina da rede pediria ao
+  // google-calendar um id_token assinado que o back E2E aceita.
+  // [DECISAO] `localhost`, e não `127.0.0.1`: o Fastify escuta em TODOS os
+  // endereços de loopback que o nome resolve (127.0.0.1 e ::1). Só no IPv4, um
+  // cliente que tente o ::1 primeiro (Windows, Node 17+) espera a recusa antes
+  // de cair no 127.0.0.1, e o timeout curto do back (5 s) vira falha intermitente.
+  await app.listen({ port: opts.port, host: 'localhost' });
   // eslint-disable-next-line no-console
   console.log(`[${opts.name}] fake provider listening on http://localhost:${opts.port}`);
 

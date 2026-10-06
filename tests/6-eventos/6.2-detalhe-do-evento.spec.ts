@@ -1,4 +1,5 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 import { smokeRoute } from '../../helpers/smoke';
 import { apiGetEvent } from '../../helpers/api-event-flow';
 import { setupAcceptedEvent } from '../../helpers/setup-flows';
@@ -10,7 +11,9 @@ import type { EventDTO } from '../../helpers/types';
  */
 
 test.describe('Fluxo 6.2 — Detalhe do evento', () => {
-  test('@flow listagem de eventos carrega autenticada', async ({ authPage }) => {
+  test('@flow listagem de eventos carrega autenticada', async ({ authPage, authApi }) => {
+    // Tenant novo cai no onboardingGuard (Etapa 109) e o goto vira /app/onboarding.
+    await apiCompleteOnboarding(authApi);
     await smokeRoute(authPage, '/app/events/list');
   });
 

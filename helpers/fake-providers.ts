@@ -17,6 +17,7 @@ const URLS = {
   openai: process.env.FAKE_OPENAI_URL ?? 'http://localhost:1514',
   anthropic: process.env.FAKE_ANTHROPIC_URL ?? 'http://localhost:1515',
   googleMaps: process.env.FAKE_GOOGLE_MAPS_URL ?? 'http://localhost:1516',
+  googleCalendar: process.env.FAKE_GOOGLE_CALENDAR_URL ?? 'http://localhost:1517',
 } as const;
 
 export type FakeProvider = keyof typeof URLS;
@@ -275,4 +276,148 @@ export const fakeAsaas = {
     eventId?: string;
     accessToken?: string;
   }) => triggerWebhook('asaas', body),
+};
+
+// ─── Google Agenda (PLANO-AGENDAS-EXTERNAS) ─────────────────────────────────
+
+/** Modos de falha por conta (`fake-providers/google-calendar/src/state.ts`). */
+export type FakeGoogleCalendarFailure = '500' | '429' | 'invalid_grant' | '401' | '404calendar';
+
+export interface FakeGoogleCalendarEvent {
+  id: string;
+  calendarId: string;
+  /** `confirmed` ou `cancelled` (lixeira). */
+  status: string;
+  summary: string | null;
+  description: string | null;
+  location: string | null;
+  start: { dateTime?: string; date?: string; timeZone?: string } | null;
+  end: { dateTime?: string; date?: string; timeZone?: string } | null;
+  colorId: string | null;
+  reminders: { useDefault?: boolean; overrides?: Array<{ method: string; minutes: number }> } | null;
+  visibility: string | null;
+  transparency: string | null;
+  extendedProperties: { private?: Record<string, string> } | null;
+  htmlLink: string;
+  origin: 'api' | 'manual';
+  sequence: number;
+}
+
+export interface FakeGoogleCalendarCalendar {
+  id: string;
+  sub: string;
+  summary: string;
+  timeZone: string;
+  deleted: boolean;
+  events: FakeGoogleCalendarEvent[];
+}
+
+export interface FakeGoogleCalendarAccount {
+  sub: string;
+  email: string;
+  failure: { mode: FakeGoogleCalendarFailure; remaining: number | null } | null;
+  grants: Array<{ id: string; scope: string; revoked: boolean; hasRefreshToken: boolean }>;
+  calendars: FakeGoogleCalendarCalendar[];
+}
+
+async function googleCalendarCall<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, data?: unknown): Promise<T> {
+  const api = await ctx();
+  try {
+    const res = await api.fetch(`${URLS.googleCalendar}${path}`, { method, data });
+    if (!res.ok()) throw new Error(`fake google-calendar ${method} ${path}: ${res.status()} ${await res.text()}`);
+    return (await res.json()) as T;
+  } finally {
+    await api.dispose();
+  }
+}
+
+/**
+ * Fake Google Agenda (porta 1517). Cada spec usa uma CONTA própria (`sub`
+ * único, de `authorize`): agendas, eventos, revogação e falhas são da conta,
+ * então specs paralelos não se enxergam. `resetState` limpa todas as contas:
+ * só para depuração local, nunca num spec.
+ */
+export const fakeGoogleCalendar = {
+  baseUrl: URLS.googleCalendar,
+  inbox: (filter?: { tenantId?: string; path?: string; since?: string }) =>
+    fetchInbox('googleCalendar', filter),
+  clear: () => clearInbox('googleCalendar'),
+  resetState: () => googleCalendarCall<{ reset: boolean }>('DELETE', '/_control/state'),
+
+  /**
+   * O "popup" do GIS: código de autorização de uso único para a conta, que o
+   * spec entrega ao `POST api/calendar/google/connect`. Sem `sub`, o fake cria
+   * uma conta nova. `scope` default inclui `calendar.app.created`.
+   */
+  authorize: (input: {
+    sub?: string;
+    email?: string;
+    scope?: string;
+    omitRefreshToken?: boolean;
+    omitIdToken?: boolean;
+    idTokenAudience?: string;
+  } = {}) =>
+    googleCalendarCall<{ code: string; sub: string; email: string; scope: string }>(
+      'POST',
+      '/_control/authorize',
+      input,
+    ),
+
+  /** Conta com grants, falha ativa, agendas e TODOS os eventos (inclusive os da lixeira). */
+  account: (sub: string) =>
+    googleCalendarCall<FakeGoogleCalendarAccount>('GET', `/_control/accounts/${encodeURIComponent(sub)}`),
+
+  /** Eventos vivos (não `cancelled`) de todas as agendas não apagadas da conta. */
+  liveEvents: async (sub: string): Promise<FakeGoogleCalendarEvent[]> => {
+    const account = await fakeGoogleCalendar.account(sub);
+    return account.calendars
+      .filter((c) => !c.deleted)
+      .flatMap((c) => c.events)
+      .filter((e) => e.status !== 'cancelled');
+  },
+
+  /** O evento que o back espelhou para `eventId` (pelo marcador privado), em qualquer status; ou undefined. */
+  eventFor: async (sub: string, eventId: string): Promise<FakeGoogleCalendarEvent | undefined> => {
+    const account = await fakeGoogleCalendar.account(sub);
+    return account.calendars
+      .flatMap((c) => c.events)
+      .find((e) => e.extendedProperties?.private?.recreativoEventId === eventId);
+  },
+
+  /** "Remover acesso" em myaccount.google.com: revoga todos os grants da conta. */
+  revokeAccount: (sub: string) =>
+    googleCalendarCall<{ revoked: number }>('POST', `/_control/accounts/${encodeURIComponent(sub)}/revoke`),
+
+  /**
+   * Liga um modo de falha para a conta: `500` (Google fora), `429`,
+   * `invalid_grant` (API 401 + refresh recusado), `401` (só a API),
+   * `404calendar`. `times` = quantas requisições falham (sem = até `clearFailure`).
+   */
+  setFailure: (sub: string, mode: FakeGoogleCalendarFailure, times?: number) =>
+    googleCalendarCall('PUT', `/_control/accounts/${encodeURIComponent(sub)}/failure`, { mode, times: times ?? null }),
+
+  clearFailure: (sub: string) =>
+    googleCalendarCall('DELETE', `/_control/accounts/${encodeURIComponent(sub)}/failure`),
+
+  calendar: (calendarId: string) =>
+    googleCalendarCall<FakeGoogleCalendarCalendar>('GET', `/_control/calendars/${encodeURIComponent(calendarId)}`),
+
+  /** O gestor apaga a agenda dedicada à mão no Google. */
+  deleteCalendarByHand: (calendarId: string) =>
+    googleCalendarCall<{ deleted: boolean }>('DELETE', `/_control/calendars/${encodeURIComponent(calendarId)}`),
+
+  /** Evento criado à mão na agenda; sem `extendedProperties`, sem o nosso marcador. */
+  createEventByHand: (calendarId: string, event: Record<string, unknown>) =>
+    googleCalendarCall<FakeGoogleCalendarEvent>(
+      'POST',
+      `/_control/calendars/${encodeURIComponent(calendarId)}/events`,
+      event,
+    ),
+
+  /** Evento apagado à mão: lixeira (PATCH restaura, insert do mesmo id dá 409) ou, com `purge`, some de vez (404). */
+  deleteEventByHand: (calendarId: string, eventId: string, purge = false) =>
+    googleCalendarCall<{ deleted: boolean; purged: boolean }>(
+      'DELETE',
+      `/_control/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}${purge ? '?purge=true' : ''}`,
+    ),
 };

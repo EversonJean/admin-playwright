@@ -12,8 +12,9 @@ import { loginViaApi } from '../helpers/api-client';
  * ou aceitar que SuperAdmin specs precisam de tenant zero.
  */
 
-const SUPER_ADMIN_EMAIL = 'superadmin@dev.local';
-const SUPER_ADMIN_PASSWORD = 'Dev12345!';
+/** Credenciais do SuperAdmin semeado no E2E; specs fora do `superAdminTest` importam daqui. */
+export const SUPER_ADMIN_EMAIL = 'superadmin@dev.local';
+export const SUPER_ADMIN_PASSWORD = 'Dev12345!';
 const BACK_URL = process.env.BACK_URL ?? 'https://localhost:1501';
 
 export interface SuperAdminFixtures {

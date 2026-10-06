@@ -37,6 +37,19 @@ export interface CreateBudgetInput {
   validUntilDate?: string; // default = hoje + 14
   /** Local do evento; default fixo. Distinto por orçamento quando o teste lê a linha da lista. */
   eventLocation?: string;
+  /**
+   * Orçamento recorrente (Etapa 118): o aceite gera uma ocorrência por data da
+   * regra, com a `eventDate` como âncora. `untilDate` XOR `occurrenceCount`.
+   * Dias pelo nome do `DayOfWeek` (`'Saturday'`). Omitida = evento único.
+   */
+  recurrence?: { daysOfWeek: string[]; untilDate?: string; occurrenceCount?: number };
+  /** Pacote do orçamento (o evento herda; `{pacote}` do espelho de agenda). Omitido = sem pacote. */
+  packageId?: string;
+  /**
+   * Venda via parceiro (Etapa 184): o `clientId` é o SALÃO (cliente com
+   * `isPartner`) e a família vai em `partnerSaleCustomer`. Omitido = venda direta.
+   */
+  partnerSale?: { endCustomerName?: string; celebrantName?: string; celebrantAge?: number };
 }
 
 function todayPlus(days: number): string {
@@ -63,6 +76,26 @@ export async function apiCreateBudget(
     teamPricePerCollaborator: 200,
     displacementFee: 0,
     items: input.activityIds.map((id) => ({ activityId: id, quantity: 1 })),
+    ...(input.recurrence
+      ? {
+          recurrence: {
+            daysOfWeek: input.recurrence.daysOfWeek,
+            untilDate: input.recurrence.untilDate ?? null,
+            occurrenceCount: input.recurrence.occurrenceCount ?? null,
+          },
+        }
+      : {}),
+    ...(input.packageId ? { packageId: input.packageId } : {}),
+    ...(input.partnerSale
+      ? {
+          isPartnerSale: true,
+          partnerSaleCustomer: {
+            endCustomerName: input.partnerSale.endCustomerName ?? null,
+            celebrantName: input.partnerSale.celebrantName ?? null,
+            celebrantAge: input.partnerSale.celebrantAge ?? null,
+          },
+        }
+      : {}),
   };
   const res = await api.post('/api/budgets', { data: body });
   await expectOk(res, 'apiCreateBudget');

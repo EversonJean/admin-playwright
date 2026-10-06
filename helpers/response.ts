@@ -33,6 +33,19 @@ export async function assertOk(res: APIResponse, op: string): Promise<void> {
 }
 
 /**
+ * Os `code` dos erros de uma resposta de falha do back (`{ errors: [{ code, description }] }`),
+ * para afirmar o motivo da recusa e nao so o status. Sem `errors`, lista vazia.
+ *
+ * Uso tipico:
+ *   expect(res.status()).toBe(409);
+ *   expect(await apiErrorCodes(res)).toContain('ExternalCalendar.SyncCooldown');
+ */
+export async function apiErrorCodes(res: { json: () => Promise<unknown> }): Promise<string[]> {
+  const body = (await res.json()) as { errors?: Array<{ code: string }> };
+  return (body.errors ?? []).map((e) => e.code);
+}
+
+/**
  * Desempacota uma resposta de lista paginada. Fixa o contrato em
  * `body.data.items[]` (padrao do back AdminBackend). Aceita variantes
  * estaveis (`body.items`, `body.data` array direto), mas FALHA explicito
