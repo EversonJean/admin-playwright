@@ -1,22 +1,48 @@
-import { APIRequestContext, request as playwrightRequest } from '@playwright/test';
+import { APIRequestContext, Browser, BrowserContext, Page, request as playwrightRequest } from '@playwright/test';
 import { apiCreateActivity, apiCreateClient, apiCreateCollaborator } from './api-entities';
 import {
   apiAcceptPublicBudget,
   apiCreateBudget,
   apiCreatePaymentPlan,
   apiGetPaymentSummary,
+  apiPatchEvent,
   apiRegisterPayment,
   apiSendBudget,
   CreateBudgetInput,
   createPublicApiContext,
   extractTokenFromPublicUrl,
+  publicAcceptBody,
 } from './api-event-flow';
-import { enableFeatureFlagDirect, seedCollaboratorPortalUserDirect } from './db-helper';
+import { enableFeatureFlagDirect, seedCollaboratorPortalUserDirect, seedUserWithRoleDirect } from './db-helper';
 import { fakeClicksign } from './fake-providers';
 import { loginViaApi } from './api-client';
 import { assertOk, readJson } from './response';
 
 const BACK_URL = process.env.BACK_URL ?? 'https://localhost:1501';
+const FRONT_URL = process.env.FRONT_URL ?? 'http://localhost:4200';
+const DAY_MS = 86_400_000;
+
+/** `iso` (YYYY-MM-DD) deslocada de `days` dias. */
+function shiftIsoDate(iso: string, days: number): string {
+  return new Date(new Date(`${iso}T00:00:00Z`).getTime() + days * DAY_MS).toISOString().slice(0, 10);
+}
+
+/**
+ * Data em que o orçamento de uma festa em `eventDate` pode nascer, e quantos
+ * dias ela foi adiantada. A validade do orçamento fica entre hoje e a véspera
+ * da festa; o "hoje" do back é a data UTC ou a do tenant (Brasília), que nunca
+ * passa da UTC. Véspera antes da data UTC de hoje não tem validade possível:
+ * a festa de hoje (domingo do card da Home) e a de amanhã de sexta das 21:00
+ * à meia-noite de Brasília, quando o UTC já virou sábado. Essas nascem em hoje
+ * UTC + 2 e voltam para a data pedida depois do aceite.
+ */
+function budgetDateFor(eventDate: string): { date: string; shiftDays: number } {
+  const utcToday = new Date().toISOString().slice(0, 10);
+  if (shiftIsoDate(eventDate, -1) >= utcToday) return { date: eventDate, shiftDays: 0 };
+  const safe = shiftIsoDate(utcToday, 2);
+  const shiftDays = Math.round((Date.parse(`${safe}T00:00:00Z`) - Date.parse(`${eventDate}T00:00:00Z`)) / DAY_MS);
+  return { date: safe, shiftDays };
+}
 
 /**
  * Cria a cadeia completa cliente -> atividade -> orcamento -> envio ->
@@ -28,11 +54,22 @@ const BACK_URL = process.env.BACK_URL ?? 'https://localhost:1501';
  *
  * `opts.clientId` reaproveita um cliente existente (duas festas do mesmo
  * cliente); `opts.budget` troca data, horário e crianças do orçamento.
+ * `opts.activityIds` usa atividades já criadas (com requisito de habilidade ou
+ * insumo) no lugar de uma nova. Com `opts.budget.address`, o aceite manda
+ * `address: null` e o evento herda o endereço estruturado do orçamento (com a
+ * coordenada); sem ele, o corpo padrão do aceite.
+ *
+ * Festa cuja véspera já passou na data UTC (hoje; amanhã de sexta à noite em
+ * Brasília) não nasce por orçamento: o orçamento sai numa data segura e o
+ * evento volta para `opts.budget.eventDate` por `PATCH /api/events/{id}` depois
+ * do aceite (`budgetDateFor`). Vale com o back validando pela data UTC ou pela
+ * do tenant.
  */
 export async function setupAcceptedEvent(
   api: APIRequestContext,
   opts: {
     clientId?: string;
+    activityIds?: string[];
     budget?: Partial<Omit<CreateBudgetInput, 'clientId' | 'activityIds'>>;
   } = {},
 ): Promise<{
@@ -43,22 +80,39 @@ export async function setupAcceptedEvent(
   budgetTotal: number;
 }> {
   const clienteId = opts.clientId ?? (await apiCreateClient(api)).id;
-  const atividade = await apiCreateActivity(api);
+  const activityIds = opts.activityIds ?? [(await apiCreateActivity(api)).id];
+  const wantedDate = opts.budget?.eventDate;
+  const relocation = wantedDate ? budgetDateFor(wantedDate) : { date: undefined, shiftDays: 0 };
+  const endDate = opts.budget?.eventEndDate;
   const orcamento = await apiCreateBudget(api, {
     ...opts.budget,
+    ...(relocation.shiftDays > 0
+      ? {
+          eventDate: relocation.date,
+          eventEndDate: endDate ? shiftIsoDate(endDate, relocation.shiftDays) : undefined,
+        }
+      : {}),
     clientId: clienteId,
-    activityIds: [atividade.id],
+    activityIds,
   });
   const sent = await apiSendBudget(api, orcamento.id);
   const token = extractTokenFromPublicUrl(sent.publicUrl);
 
+  const acceptBody = opts.budget?.address
+    ? { ...publicAcceptBody(), address: null }
+    : publicAcceptBody();
+
   const publicApi = await createPublicApiContext();
   try {
-    const aceito = await apiAcceptPublicBudget(publicApi, token);
+    const aceito = await apiAcceptPublicBudget(publicApi, token, acceptBody);
+    // Só a data: o domínio desloca o fim mantendo a diferença de dias.
+    if (relocation.shiftDays > 0 && wantedDate) {
+      await apiPatchEvent(api, aceito.eventId, { eventDate: wantedDate });
+    }
     return {
       eventId: aceito.eventId,
       clienteId,
-      atividadeId: atividade.id,
+      atividadeId: activityIds[0]!,
       orcamentoId: orcamento.id,
       budgetTotal: (orcamento as unknown as { total?: number }).total ?? 0,
     };
@@ -239,10 +293,104 @@ export async function setupFormalizedContract(
   };
 }
 
+/** Sessão de um usuário logado pela API (papel do tenant ou Portal). */
+export interface RoleSession {
+  /** API autenticada como o usuário; o chamador faz `dispose()`. */
+  api: APIRequestContext;
+  tokens: { accessToken: string; refreshToken: string };
+  email: string;
+}
+
+async function loginAndContext(email: string, password: string): Promise<RoleSession> {
+  const anon = await playwrightRequest.newContext({
+    baseURL: BACK_URL,
+    ignoreHTTPSErrors: true,
+    extraHTTPHeaders: { 'Content-Type': 'application/json' },
+  });
+  const tokens = await loginViaApi(anon, email, password).finally(() => anon.dispose());
+  const api = await playwrightRequest.newContext({
+    baseURL: BACK_URL,
+    ignoreHTTPSErrors: true,
+    extraHTTPHeaders: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokens.accessToken}` },
+  });
+  return { api, tokens, email };
+}
+
+/** Página num contexto de navegador próprio, já logada com os tokens dados. */
+export interface SessionPage {
+  page: Page;
+  context: BrowserContext;
+}
+
+/**
+ * Abre um contexto de navegador NOVO com a sessão destes tokens (molde do
+ * `13.4` e do `1.3`): o `localStorage` dele não tem o init script do
+ * `authPage`, então a sessão não depende da ordem dos init scripts. O chamador
+ * fecha com `context.close()`.
+ */
+export async function openSessionPage(
+  browser: Browser,
+  tokens: { accessToken: string; refreshToken: string },
+): Promise<SessionPage> {
+  const context = await browser.newContext({ baseURL: FRONT_URL, ignoreHTTPSErrors: true });
+  await context.addInitScript(
+    ({ access, refresh }) => {
+      localStorage.setItem('access_token', access);
+      if (refresh) localStorage.setItem('refresh_token', refresh);
+    },
+    { access: tokens.accessToken, refresh: tokens.refreshToken ?? null },
+  );
+  return { page: await context.newPage(), context };
+}
+
+/**
+ * Usuário de verdade com o papel dado no tenant (não stub de permissão):
+ * `seedUserWithRoleDirect` + login pela API. Para navegar como ele, abra a
+ * página com `openSessionPage(browser, session.tokens)`.
+ */
+export async function loginAsRole(
+  tenantId: string,
+  role: 'Owner' | 'Admin' | 'Manager' | 'Financial',
+): Promise<RoleSession> {
+  const user = seedUserWithRoleDirect({ tenantId, role, emailPrefix: role.toLowerCase() });
+  return loginAndContext(user.email, user.password);
+}
+
+/**
+ * Login no Portal de um colaborador JÁ existente (o `setupPortalUser` cria um
+ * novo): usuário `CollaboratorPortal` semeado por SQL + login pela API.
+ */
+export async function loginPortalCollaborator(tenantId: string, collaboratorId: string): Promise<RoleSession> {
+  const user = seedCollaboratorPortalUserDirect({ tenantId, collaboratorId });
+  return loginAndContext(user.email, user.password);
+}
+
+/** POST /api/portal/availability/overrides — o colaborador declara que NÃO está disponível no dia. */
+export async function portalDeclareUnavailable(
+  portalApi: APIRequestContext,
+  date: string,
+  reason = 'Indisponível (E2E)',
+): Promise<void> {
+  const res = await portalApi.post('/api/portal/availability/overrides', {
+    data: { date, isAvailable: false, reason },
+  });
+  await assertOk(res, 'POST /api/portal/availability/overrides');
+}
+
+/** POST /api/portal/my-events/{id}/decline — o colaborador recusa a escalação. */
+export async function portalDeclineEvent(
+  portalApi: APIRequestContext,
+  eventId: string,
+  reason = 'Não vou conseguir (E2E)',
+): Promise<void> {
+  const res = await portalApi.post(`/api/portal/my-events/${eventId}/decline`, { data: { reason } });
+  await assertOk(res, 'POST /api/portal/my-events/{id}/decline');
+}
+
 /**
  * Cria Collaborator (via admin) + User CollaboratorPortal (via SQL com
- * hash reusado do superadmin) e faz login. Devolve um APIRequestContext
- * ja autenticado como portal user + o collaboratorId.
+ * hash reusado do superadmin) e faz login (`loginAndContext`). Devolve um
+ * APIRequestContext ja autenticado como portal user + o collaboratorId.
  *
  * IMPORTANTE: o caller eh responsavel por chamar `.dispose()` no
  * `portalApi` retornado pra evitar leak.
@@ -258,6 +406,10 @@ export async function setupPortalUser(
   email: string;
   /** Tokens do usuário de portal — para injetar no localStorage de uma Page (UI do Portal). */
   tokens: { accessToken: string; refreshToken: string };
+  /**
+   * Mantido para os chamadores antigos: o contexto anônimo do login já é
+   * descartado pelo `loginAndContext`, então não há nada a liberar.
+   */
   publicApiDispose: () => Promise<void>;
 }> {
   const colab = await apiCreateCollaborator(authApi);
@@ -265,36 +417,13 @@ export async function setupPortalUser(
     tenantId,
     collaboratorId: colab.id,
   });
-
-  const publicApi = await playwrightRequest.newContext({
-    baseURL: BACK_URL,
-    ignoreHTTPSErrors: true,
-    extraHTTPHeaders: { 'Content-Type': 'application/json' },
-  });
-  let tokens: { accessToken: string; refreshToken: string };
-  try {
-    tokens = await loginViaApi(publicApi, portalUser.email, portalUser.password);
-  } catch (err) {
-    await publicApi.dispose();
-    throw err;
-  }
-
-  const portalApi = await playwrightRequest.newContext({
-    baseURL: BACK_URL,
-    ignoreHTTPSErrors: true,
-    extraHTTPHeaders: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${tokens.accessToken}`,
-    },
-  });
+  const session = await loginAndContext(portalUser.email, portalUser.password);
 
   return {
-    portalApi,
+    portalApi: session.api,
     collaboratorId: colab.id,
     email: portalUser.email,
-    tokens,
-    publicApiDispose: async () => {
-      await publicApi.dispose();
-    },
+    tokens: session.tokens,
+    publicApiDispose: async () => {},
   };
 }

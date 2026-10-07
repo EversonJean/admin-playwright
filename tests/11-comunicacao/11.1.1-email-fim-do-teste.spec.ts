@@ -35,9 +35,10 @@ const EXPIRED = 'Seu período de teste chegou ao fim';
 const TENANT_TZ = 'Asia/Tokyo';
 
 /**
- * Prazo próprio do disparo: enquanto a SEG-G item 0 (PLANO-SEGURANCA) não sai,
- * o request autenticado roda sem filtro de tenant e o job varre os gatilhos de
- * TODOS os tenants do banco E2E (centenas), o que passa dos 15 s padrão.
+ * Prazo próprio do disparo: nasceu quando a SEG-G item 0 (PLANO-SEGURANCA)
+ * deixava o request autenticado sem filtro de tenant e o job varria os gatilhos
+ * de TODOS os tenants do banco E2E. Fechada em 2026-10-07; o prazo fica como
+ * folga para o banco E2E carregado.
  */
 const TRIGGER_TIMEOUT = 180_000;
 
@@ -60,15 +61,9 @@ test.describe('Fluxo 11.1.1 — trial ending e-mails', () => {
     authApi,
     tenant,
   }) => {
-    // O primeiro disparo do arquivo é o que cria os avisos do banco inteiro:
-    // sem o filtro de tenant, o job cruza as parcelas vencidas e os eventos de
-    // TODOS os tenants com os gestores de TODOS os tenants e não termina nem
-    // em TRIGGER_TIMEOUT. Asserções intactas; com a SEG-G o disparo volta a
-    // ser só do tenant e este teste passa a passar (e a marca sai).
-    test.fail(
-      true,
-      'SEG-G item 0 (PLANO-SEGURANCA): filtro de tenant desligado em request autenticado; tirar esta marca quando a SEG-G sair',
-    );
+    // A marca `test.fail` da SEG-G item 0 saiu em 2026-10-07: com o filtro de
+    // tenant de volta no request autenticado (CachedTokenStateValidator), o
+    // disparo é só do tenant e o teste passa.
 
     // 1. D-3 no calendário do tenant.
     setTrialEndDirect(tenant.tenantId, TENANT_TZ, 3);
@@ -120,11 +115,6 @@ twoTenantsTest.describe('Fluxo 11.1.1 — trial ending e-mails: tenant isolation
     tenantA,
     tenantB,
   }) => {
-    twoTenantsTest.fail(
-      true,
-      'SEG-G item 0 (PLANO-SEGURANCA): filtro de tenant desligado em request autenticado; tirar esta marca quando a SEG-G sair',
-    );
-
     // B já assinou; A está a 3 dias do fim. Só A dispara o job.
     setSubscriptionActiveDirect(tenantB.tenantId);
     setTrialEndDirect(tenantA.tenantId, TENANT_TZ, 3);

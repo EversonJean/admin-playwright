@@ -79,12 +79,100 @@ async function triggerWebhook<T>(provider: FakeProvider, body: T): Promise<{ bac
 
 // ─── Google Maps ────────────────────────────────────────────────────────────
 
+export interface FakeLatLng {
+  lat: number;
+  lng: number;
+}
+
+/** Locais da tabela fixa do fake (Etapa 215): Batel, Água Verde, Colombo e Centro. */
+export interface FakeGooglePlaces {
+  batel: FakeLatLng;
+  aguaVerde: FakeLatLng;
+  colombo: FakeLatLng;
+  centro: FakeLatLng;
+}
+
 export const fakeGoogleMaps = {
   baseUrl: URLS.googleMaps,
   inbox: (filter?: { tenantId?: string; path?: string; since?: string }) =>
     fetchInbox('googleMaps', filter),
   clear: () => clearInbox('googleMaps'),
+  /** Coordenadas da tabela fixa de minutos por par (`GET /_control/distances`). */
+  places: async (): Promise<FakeGooglePlaces> => {
+    const api = await ctx();
+    try {
+      const res = await api.get(`${URLS.googleMaps}/_control/distances`);
+      if (!res.ok()) throw new Error(`fake google-maps distances: ${res.status()}`);
+      return ((await res.json()) as { places: FakeGooglePlaces }).places;
+    } finally {
+      await api.dispose();
+    }
+  },
+  /**
+   * As próximas `count` matrizes respondem com status global não-OK (o back
+   * degrada para "distâncias indisponíveis", sem retry). `count: 0` desarma.
+   * O fake é um só para os workers: quem arma desarma no `finally`.
+   *
+   * `coord`: a falha vale só para as matrizes que contêm essa coordenada
+   * (origem ou destino, comparada com 5 casas). Com os workers em paralelo,
+   * sem ela outro teste gasta as falhas armadas; use um ponto único do teste.
+   */
+  failNext: async (
+    count: number,
+    opts: { status?: string; coord?: FakeLatLng } = {},
+  ): Promise<void> => {
+    const api = await ctx();
+    try {
+      const res = await api.post(`${URLS.googleMaps}/_control/fail-next`, {
+        data: { count, status: opts.status ?? 'REQUEST_DENIED', coord: opts.coord },
+      });
+      if (!res.ok()) throw new Error(`fake google-maps fail-next: ${res.status()}`);
+    } finally {
+      await api.dispose();
+    }
+  },
+  /**
+   * Acrescenta (ou troca) pares na tabela fixa (`PUT /_control/distances`);
+   * `symmetric` (default true) grava também a volta. A tabela é uma só para os
+   * workers: prefira coordenadas únicas do teste (o cache de 24 h do back por
+   * par também não responde por elas) e, se trocar par da tabela padrão,
+   * `resetDistances()` no `finally`.
+   */
+  putDistances: async (
+    pairs: Array<{ from: FakeLatLng; to: FakeLatLng; minutes: number; km?: number; symmetric?: boolean }>,
+  ): Promise<void> => {
+    const api = await ctx();
+    try {
+      const res = await api.put(`${URLS.googleMaps}/_control/distances`, { data: { pairs } });
+      if (!res.ok()) throw new Error(`fake google-maps put distances: ${res.status()}`);
+    } finally {
+      await api.dispose();
+    }
+  },
+  /** Volta a tabela fixa ao padrão (`DELETE /_control/distances`). */
+  resetDistances: async (): Promise<void> => {
+    const api = await ctx();
+    try {
+      const res = await api.delete(`${URLS.googleMaps}/_control/distances`);
+      if (!res.ok()) throw new Error(`fake google-maps reset distances: ${res.status()}`);
+    } finally {
+      await api.dispose();
+    }
+  },
 };
+
+/**
+ * Uma coordenada única perto de `base` (desvio na 4a/5a casa): o fake compara
+ * com 5 casas, então o ponto não casa com nenhum par da tabela padrão nem com
+ * o de outro teste, e o cache de 24 h do back por par nunca o viu.
+ */
+export function uniquePointNear(base: FakeLatLng): FakeLatLng {
+  const jitter = () => (1 + Math.floor(Math.random() * 900)) / 100_000;
+  return {
+    lat: Number((base.lat - jitter()).toFixed(5)),
+    lng: Number((base.lng - jitter()).toFixed(5)),
+  };
+}
 
 // ─── OpenAI / Anthropic ─────────────────────────────────────────────────────
 
@@ -93,6 +181,35 @@ export const fakeOpenAi = {
   inbox: (filter?: { tenantId?: string; path?: string; since?: string }) =>
     fetchInbox('openai', filter),
   clear: () => clearInbox('openai'),
+  /**
+   * A próxima chamada cujas mensagens contêm `match` responde com `content`
+   * (o texto do assistant, normalmente um JSON). `match` é algo único do teste
+   * que aparece no prompt (o id de uma festa): o fake é um só para os workers,
+   * e uma resposta global seria consumida pelo teste do lado.
+   */
+  scriptNext: async (match: string, content: string, count = 1): Promise<void> => {
+    const api = await ctx();
+    try {
+      const res = await api.post(`${URLS.openai}/_control/next-response`, { data: { match, content, count } });
+      if (!res.ok()) throw new Error(`fake openai next-response: ${res.status()}`);
+    } finally {
+      await api.dispose();
+    }
+  },
+  /**
+   * As próximas `count` chamadas cujas mensagens contêm `match` respondem
+   * `status` (500 por default): o provider "fora". `count: 0` desarma; quem
+   * arma desarma no `finally`.
+   */
+  failNext: async (match: string, count = 10, status = 500): Promise<void> => {
+    const api = await ctx();
+    try {
+      const res = await api.post(`${URLS.openai}/_control/fail-next`, { data: { match, count, status } });
+      if (!res.ok()) throw new Error(`fake openai fail-next: ${res.status()}`);
+    } finally {
+      await api.dispose();
+    }
+  },
 };
 
 export const fakeAnthropic = {
@@ -194,6 +311,12 @@ export const fakeWhatsApp = {
     timestamp?: number;
     /** Status `failed`: motivo no formato da Meta. */
     errors?: Array<{ code: number; title: string; message?: string; error_data?: { details?: string } }>;
+    /**
+     * `phone_number_id` do canal que o back usa para achar o tenant: o que o
+     * `seedWhatsappChannelDirect` devolveu. Sem ele vai `fake_phone`, que e
+     * compartilhado e pode estar ligado no tenant de outro spec em paralelo.
+     */
+    phoneNumberId?: string;
   }) => triggerWebhook('whatsapp', body),
 };
 

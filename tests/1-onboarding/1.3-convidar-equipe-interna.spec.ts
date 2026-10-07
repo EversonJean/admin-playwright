@@ -1,5 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 
 /**
  * Fluxo: 1.3 — Convidar equipe interna
@@ -8,6 +9,11 @@ import { smokeRoute } from '../../helpers/smoke';
  */
 
 test.describe('Fluxo 1.3 — Convidar equipe interna', () => {
+  // Tenant recém-criado cai no assistente de configuração (onboardingGuard).
+  test.beforeEach(async ({ authApi }) => {
+    await apiCompleteOnboarding(authApi);
+  });
+
   test('@flow tela de invites carrega autenticada', async ({ authPage }) => {
     await smokeRoute(authPage, '/app/users/invites');
   });

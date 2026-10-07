@@ -1,5 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 
 /**
  * Fluxo: 2.3 — Tipos de evento
@@ -7,6 +8,11 @@ import { smokeRoute } from '../../helpers/smoke';
  */
 
 test.describe('Fluxo 2.3 — Tipos de evento', () => {
+  // Tenant recém-criado cai no assistente de configuração (onboardingGuard).
+  test.beforeEach(async ({ authApi }) => {
+    await apiCompleteOnboarding(authApi);
+  });
+
   test('@flow tela de listagem carrega autenticada', async ({ authPage }) => {
     await smokeRoute(authPage, '/app/settings/event-categories');
   });

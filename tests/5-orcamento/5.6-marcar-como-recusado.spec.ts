@@ -104,11 +104,6 @@ twoTenantsTest.describe('Fluxo 5.6 — refuse budget: tenant isolation', () => {
     tenantA,
     tenantB,
   }) => {
-    twoTenantsTest.fail(
-      true,
-      'SEG-G item 0 (PLANO-SEGURANCA): filtro de tenant desligado em request autenticado; tirar esta marca quando a SEG-G sair',
-    );
-
     const client = await apiCreateClient(apiA);
     const activity = await apiCreateActivity(apiA);
     const budget = await apiCreateBudget(apiA, {

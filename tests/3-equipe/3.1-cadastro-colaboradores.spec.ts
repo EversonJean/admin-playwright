@@ -1,6 +1,10 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
-import { apiCreateCollaborator, apiListCollaborators } from '../../helpers/api-entities';
+import {
+  apiCompleteOnboarding,
+  apiCreateCollaborator,
+  apiListCollaborators,
+} from '../../helpers/api-entities';
 
 /**
  * Fluxo: 3.1 — Cadastro de colaboradores
@@ -8,6 +12,11 @@ import { apiCreateCollaborator, apiListCollaborators } from '../../helpers/api-e
  */
 
 test.describe('Fluxo 3.1 — Cadastro de colaboradores', () => {
+  // Tenant recém-criado cai no assistente de configuração (onboardingGuard).
+  test.beforeEach(async ({ authApi }) => {
+    await apiCompleteOnboarding(authApi);
+  });
+
   test('@flow tela de listagem carrega autenticada', async ({ authPage }) => {
     await smokeRoute(authPage, '/app/collaborators/list');
   });

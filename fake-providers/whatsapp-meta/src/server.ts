@@ -123,6 +123,13 @@ await createFakeServer({
         message?: string;
         error_data?: { details?: string };
       }>;
+      /**
+       * `metadata.phone_number_id` do payload (default `fake_phone`). E por ele
+       * que o back acha o tenant: o spec passa o id do canal que semeou
+       * (`seedWhatsappChannelDirect` devolve um por tenant), senao dois specs
+       * em workers paralelos roubam o canal um do outro.
+       */
+      phoneNumberId?: string;
       /** Override URL (default https://localhost:1501/api/webhooks/whatsapp) */
       backUrl?: string;
     };
@@ -140,7 +147,7 @@ await createFakeServer({
               {
                 value: {
                   messaging_product: 'whatsapp',
-                  metadata: { display_phone_number: '5541999000000', phone_number_id: 'fake_phone' },
+                  metadata: { display_phone_number: '5541999000000', phone_number_id: body.phoneNumberId ?? 'fake_phone' },
                   ...(body.kind === 'status'
                     ? {
                         statuses: [

@@ -1,6 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
-import { apiCreateClient, apiListClients } from '../../helpers/api-entities';
+import { apiCompleteOnboarding, apiCreateClient, apiListClients } from '../../helpers/api-entities';
 
 /**
  * Fluxo: 2.5 — Clientes
@@ -8,6 +8,11 @@ import { apiCreateClient, apiListClients } from '../../helpers/api-entities';
  */
 
 test.describe('Fluxo 2.5 — Clientes', () => {
+  // Tenant recém-criado cai no assistente de configuração (onboardingGuard).
+  test.beforeEach(async ({ authApi }) => {
+    await apiCompleteOnboarding(authApi);
+  });
+
   test('@flow tela de listagem carrega autenticada', async ({ authPage }) => {
     await smokeRoute(authPage, '/app/clients/list');
   });
@@ -33,6 +38,8 @@ test.describe('Fluxo 2.5 — Clientes', () => {
     // type já tem default 'PF', status já tem default 'Active'
     await authPage.getByTestId('client-form-name').fill(nome);
     await authPage.getByTestId('client-form-document').fill(cpf);
+    // Telefone é obrigatório no cadastro (CreateClientValidator): o cliente chega pelo WhatsApp.
+    await authPage.getByTestId('client-form-phone').fill('41999990000');
     await authPage.getByTestId('client-form-save').click();
 
     await authPage.waitForURL(/\/app\/clients\/list(\?|$)/, { timeout: 10_000 });

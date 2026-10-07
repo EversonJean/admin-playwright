@@ -128,16 +128,27 @@ export function seedApprovedWhatsAppTemplateDirect(input: {
  * achar o tenant. Nao ha caminho por API: o `connect` do Embedded Signup troca
  * `code` por token na Graph API, que o fake nao implementa.
  *
- * O fake manda SEMPRE `phone_number_id = 'fake_phone'` e o back resolve o
- * tenant pelo PRIMEIRO canal ATIVO com esse id (sem unique global). Por isso
- * os canais ativos de outros tenants com o mesmo id sao desativados antes:
- * o banco E2E e sujo por design, e sem isso o inbound cairia no tenant de uma
- * execucao anterior. Consequencia: dois specs que usam inbound nao podem rodar
- * ao mesmo tempo.
+ * O back resolve o tenant pelo PRIMEIRO canal ATIVO com o `phone_number_id`
+ * do payload (sem unique global). Por isso o canal ganha um id PROPRIO DO
+ * TENANT (`fake_phone_<tenant>`), devolvido aqui, e o spec o passa ao
+ * `fakeWhatsApp.triggerWebhook({ phoneNumberId })`.
+ *
+ * [ALERTA] Ate 2026-10-07 todos usavam o mesmo `fake_phone` e este helper
+ * desligava o canal dos outros tenants: dois specs em workers paralelos (ou
+ * as copias de um `--repeat`) roubavam o canal um do outro no meio do teste,
+ * e o webhook seguinte caia no tenant alheio, ignorado com 200 (status do
+ * envio parado em `Delivered`/`Sent`, conversa que nao aparece). O
+ * `describe.configure({ mode: 'serial' })` so serializa DENTRO do arquivo.
+ *
+ * Os canais ativos com o mesmo id ainda sao desligados antes (o banco E2E e
+ * sujo por design); com o id por tenant isso so alcanca o proprio tenant.
  *
  * Classificacao e auto-lead ficam desligados: o spec quer so a conversa.
  */
-export function seedWhatsappChannelDirect(tenantId: string, phoneNumberId = 'fake_phone'): void {
+export function seedWhatsappChannelDirect(
+  tenantId: string,
+  phoneNumberId = `fake_phone_${tenantId.replace(/-/g, '')}`,
+): string {
   const safeTenant = tenantId.replace(/'/g, "''");
   const safePhone = phoneNumberId.replace(/'/g, "''");
   execSql(`
@@ -154,6 +165,7 @@ export function seedWhatsappChannelDirect(tenantId: string, phoneNumberId = 'fak
        false, false, false,
        false, now(), now(), false);
   `);
+  return phoneNumberId;
 }
 
 /**

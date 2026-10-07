@@ -21,10 +21,11 @@ import { assertOk, readJson, unwrapList } from '../../helpers/response';
  *      replay do mesmo payload não mudam nada.
  *   3. `failed` mostra "Falhou" com o motivo da Meta.
  *
- * O webhook acha o tenant pelo `phone_number_id` do canal (`fake_phone`, o que
- * o fake sempre manda) e o envio pelo wamid devolvido no envio. Como o
- * `seedWhatsappChannelDirect` desativa o canal `fake_phone` dos outros
- * tenants, os testes deste arquivo rodam em série.
+ * O webhook acha o tenant pelo `phone_number_id` do canal (o id próprio do
+ * tenant que o `seedWhatsappChannelDirect` devolve e o spec passa ao fake) e o
+ * envio pelo wamid devolvido no envio. Com o `fake_phone` compartilhado, um
+ * spec em outro worker desligava o canal entre o `delivered` e o `read`, e o
+ * `read` caía no tenant alheio (2026-10-07).
  *
  * Sem diagrama `.mmd`: verificação de plano de ajustes.
  */
@@ -134,6 +135,7 @@ async function openHistory(page: Page, conversationId: string): Promise<void> {
 }
 
 async function postStatus(
+  phoneNumberId: string,
   phone: string,
   wamid: string,
   status: 'delivered' | 'read' | 'failed',
@@ -142,6 +144,7 @@ async function postStatus(
 ): Promise<void> {
   const hook = await fakeWhatsApp.triggerWebhook({
     kind: 'status',
+    phoneNumberId,
     phone,
     messageId: wamid,
     status,
@@ -152,10 +155,13 @@ async function postStatus(
 }
 
 test.describe('Fluxo 11.2.1 — WhatsApp delivery status', () => {
+  /** Id do canal do tenant do teste corrente; é por ele que o webhook acha o tenant. */
+  let channel = '';
+
   test.beforeEach(async ({ tenant }) => {
     enableFeatureFlagDirect(tenant.tenantId, 'feature_whatsapp');
     enableFeatureFlagDirect(tenant.tenantId, 'feature_conversations');
-    seedWhatsappChannelDirect(tenant.tenantId);
+    channel = seedWhatsappChannelDirect(tenant.tenantId);
   });
 
   test('@flow signed delivered then read webhooks show "Entregue" and "Lido" with the date in the send history', async ({
@@ -173,7 +179,7 @@ test.describe('Fluxo 11.2.1 — WhatsApp delivery status', () => {
     await apiCompleteOnboarding(authApi);
 
     // 1. delivered
-    await postStatus(phone, sent.wamid, 'delivered', deliveredTs);
+    await postStatus(channel, phone, sent.wamid, 'delivered', deliveredTs);
     const delivered = await dispatchOf(authApi, sent.conversationId, sent.dispatchId);
     expect(delivered.status).toBe('Delivered');
     expect(utcMs(delivered.deliveredAt)).toBe(deliveredTs * 1000);
@@ -187,7 +193,7 @@ test.describe('Fluxo 11.2.1 — WhatsApp delivery status', () => {
     );
 
     // 2. read
-    await postStatus(phone, sent.wamid, 'read', readTs);
+    await postStatus(channel, phone, sent.wamid, 'read', readTs);
     const read = await dispatchOf(authApi, sent.conversationId, sent.dispatchId);
     expect(read.status).toBe('Read');
     expect(utcMs(read.readAt)).toBe(readTs * 1000);
@@ -212,14 +218,14 @@ test.describe('Fluxo 11.2.1 — WhatsApp delivery status', () => {
     const readTs = now - 1800;
 
     // A Meta troca a ordem: o `read` chega primeiro.
-    await postStatus(phone, sent.wamid, 'read', readTs);
+    await postStatus(channel, phone, sent.wamid, 'read', readTs);
     const afterRead = await dispatchOf(authApi, sent.conversationId, sent.dispatchId);
     expect(afterRead.status).toBe('Read');
 
     // O `delivered` atrasado não rebaixa.
-    await postStatus(phone, sent.wamid, 'delivered', now - 3600);
+    await postStatus(channel, phone, sent.wamid, 'delivered', now - 3600);
     // Replay byte a byte do `read` (mesmo timestamp).
-    await postStatus(phone, sent.wamid, 'read', readTs);
+    await postStatus(channel, phone, sent.wamid, 'read', readTs);
 
     const final = await dispatchOf(authApi, sent.conversationId, sent.dispatchId);
     expect(final.status).toBe('Read');
@@ -241,7 +247,7 @@ test.describe('Fluxo 11.2.1 — WhatsApp delivery status', () => {
     const phone = uniquePhone();
     const sent = await sendTemplate(authApi, phone);
 
-    await postStatus(phone, sent.wamid, 'failed', Math.floor(Date.now() / 1000), [
+    await postStatus(channel, phone, sent.wamid, 'failed', Math.floor(Date.now() / 1000), [
       {
         code: 131026,
         title: 'Message undeliverable',

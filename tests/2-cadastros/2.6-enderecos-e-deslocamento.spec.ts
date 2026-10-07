@@ -1,6 +1,7 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
 import { fakeGoogleMaps } from '../../helpers/fake-providers';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 
 /**
  * Fluxo: 2.6 — Endereços e deslocamento
@@ -12,6 +13,11 @@ import { fakeGoogleMaps } from '../../helpers/fake-providers';
  */
 
 test.describe('Fluxo 2.6 — Endereços e deslocamento', () => {
+  // Tenant recém-criado cai no assistente de configuração (onboardingGuard).
+  test.beforeEach(async ({ authApi }) => {
+    await apiCompleteOnboarding(authApi);
+  });
+
   test('@flow tela de tabela de deslocamento carrega autenticada', async ({ authPage }) => {
     await smokeRoute(authPage, '/app/settings/displacement');
   });
