@@ -53,7 +53,7 @@ import { SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD } from '../../fixtures/super-ad
 
 /**
  * Fluxo: 8.5 — Agenda externa: personalização (cores, lembretes, o que espelhar, título e descrição)
- * Plano: docs/implementar/PLANO-AGENDAS-EXTERNAS.md §6a (GC-C), §3.3 (`StartAsync` é gancho desde a 217),
+ * Plano: docs/implementar/fase2/PLANO-AGENDAS-EXTERNAS.md §6a (GC-C), §3.3 (`StartAsync` é gancho desde a 217),
  *        §3.4 (tradução Google: `colorId`, `reminders`), §3.7 (`CalendarLink.*`), §8.1 item 8 (lista fechada);
  *        registro e2e §12 (E14, E31, E32, E33, E34)
  * Diagrama: docs/fluxos/negocio-8.5-agenda-externa-personalizacao.mmd

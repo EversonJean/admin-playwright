@@ -25,7 +25,7 @@ import { snack } from '../../helpers/ui';
 
 /**
  * Fluxo: 8.3 — Agenda externa: "Sincronizar" e reconciliação
- * Plano: docs/implementar/PLANO-AGENDAS-EXTERNAS.md §5 (GC-B), §3.7, §8.1 itens 2, 6, 11 e 14;
+ * Plano: docs/implementar/fase2/PLANO-AGENDAS-EXTERNAS.md §5 (GC-B), §3.7, §8.1 itens 2, 6, 11 e 14;
  *        registro e2e §12 (E7, E8, E18, E19, E20)
  * Diagrama: docs/fluxos/negocio-8.3-agenda-externa-sincronizar.mmd
  *

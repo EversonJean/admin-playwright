@@ -16,7 +16,7 @@ import { apiErrorCodes } from '../../helpers/response';
 
 /**
  * Fluxo: 8.2 — Agenda externa: conectar o Google e espelhar em background
- * Plano: docs/implementar/PLANO-AGENDAS-EXTERNAS.md §4 (GC-A), §3.3, §3.7, §8.1; registro e2e §12 (E1, E4, E5, E6)
+ * Plano: docs/implementar/fase2/PLANO-AGENDAS-EXTERNAS.md §4 (GC-A), §3.3, §3.7, §8.1; registro e2e §12 (E1, E4, E5, E6)
  * Diagrama: docs/fluxos/negocio-8.2-agenda-externa-google.mmd
  *
  * Integração pelo fake `fake-providers/google-calendar` (porta 1517). O popup

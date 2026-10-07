@@ -28,7 +28,7 @@ import { snack } from '../../helpers/ui';
 
 /**
  * Fluxo: 8.4 — Agenda externa: central de pendências (reenviar, resolver a causa, espelhar o que falta)
- * Plano: docs/implementar/PLANO-AGENDAS-EXTERNAS.md §5b (GC-F), §3.6, §3.7, §8.1 itens 4 e 6,
+ * Plano: docs/implementar/fase2/PLANO-AGENDAS-EXTERNAS.md §5b (GC-F), §3.6, §3.7, §8.1 itens 4 e 6,
  *        decisões 26 a 31 (§9.4); registro e2e §12 (E9, E10, E11, E12, E13, E24, E25, E26)
  * Diagrama: docs/fluxos/negocio-8.4-agenda-externa-pendencias.mmd
  *

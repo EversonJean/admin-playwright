@@ -17,7 +17,7 @@ import { apiConnectGoogleCalendar, waitForGoogleEvent } from '../../helpers/exte
 
 /**
  * Fluxo completo: aceite do orçamento -> evento -> espelho na agenda externa (Google)
- * Plano: docs/implementar/PLANO-AGENDAS-EXTERNAS.md §3.3 (ganchos e enfileirador com o
+ * Plano: docs/implementar/fase2/PLANO-AGENDAS-EXTERNAS.md §3.3 (ganchos e enfileirador com o
  * tenant do `Event`), §3.4 (payload), §6a.1 item 1 e §8.1 itens 1 e 8 (lista fechada);
  * registro e2e §12 (E2, E3)
  * Diagrama: docs/fluxos/negocio-8.2-agenda-externa-google.mmd
