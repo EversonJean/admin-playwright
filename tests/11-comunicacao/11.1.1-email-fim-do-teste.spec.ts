@@ -21,9 +21,9 @@ import { assertOk } from '../../helpers/response';
  * O fuso do tenant é o de Tóquio (UTC+9), para a data local poder ser outra
  * que a do servidor e a do navegador.
  *
- * Um teste por vez, na ordem (sem pular os seguintes quando um falha): enquanto
- * a SEG-G não sai, o disparo de um tenant chega aos donos de todos (último
- * teste), e um teste em paralelo receberia o e-mail do outro.
+ * Um teste por vez, na ordem (sem pular os seguintes quando um falha): cada
+ * teste chama o job diário até quatro vezes, e em paralelo os disparos disputariam
+ * o mesmo back no prazo do TRIGGER_TIMEOUT.
  *
  * Sem diagrama `.mmd`: verificação de plano de ajustes.
  */
@@ -35,9 +35,9 @@ const EXPIRED = 'Seu período de teste chegou ao fim';
 const TENANT_TZ = 'Asia/Tokyo';
 
 /**
- * Prazo próprio do disparo: enquanto a SEG-G item 0 (PLANO-SEGURANCA) não sai,
- * o request autenticado roda sem filtro de tenant e o job varre os gatilhos de
- * TODOS os tenants do banco E2E (centenas), o que passa dos 15 s padrão.
+ * Prazo próprio do disparo, por folga: o job percorre todos os gatilhos do
+ * tenant (parcelas, eventos, avisos) num request só, e com o back do e2e
+ * compilando ou sob carga isso pode passar dos 15 s padrão.
  */
 const TRIGGER_TIMEOUT = 180_000;
 
@@ -60,16 +60,6 @@ test.describe('Fluxo 11.1.1 — trial ending e-mails', () => {
     authApi,
     tenant,
   }) => {
-    // O primeiro disparo do arquivo é o que cria os avisos do banco inteiro:
-    // sem o filtro de tenant, o job cruza as parcelas vencidas e os eventos de
-    // TODOS os tenants com os gestores de TODOS os tenants e não termina nem
-    // em TRIGGER_TIMEOUT. Asserções intactas; com a SEG-G o disparo volta a
-    // ser só do tenant e este teste passa a passar (e a marca sai).
-    test.fail(
-      true,
-      'SEG-G item 0 (PLANO-SEGURANCA): filtro de tenant desligado em request autenticado; tirar esta marca quando a SEG-G sair',
-    );
-
     // 1. D-3 no calendário do tenant.
     setTrialEndDirect(tenant.tenantId, TENANT_TZ, 3);
     await triggerDailyJob(authApi);
@@ -120,11 +110,6 @@ twoTenantsTest.describe('Fluxo 11.1.1 — trial ending e-mails: tenant isolation
     tenantA,
     tenantB,
   }) => {
-    twoTenantsTest.fail(
-      true,
-      'SEG-G item 0 (PLANO-SEGURANCA): filtro de tenant desligado em request autenticado; tirar esta marca quando a SEG-G sair',
-    );
-
     // B já assinou; A está a 3 dias do fim. Só A dispara o job.
     setSubscriptionActiveDirect(tenantB.tenantId);
     setTrialEndDirect(tenantA.tenantId, TENANT_TZ, 3);

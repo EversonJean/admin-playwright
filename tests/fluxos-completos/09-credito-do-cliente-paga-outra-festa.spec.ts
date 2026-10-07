@@ -214,11 +214,6 @@ twoTenantsTest.describe('Fluxo 09 — client credit: tenant isolation', () => {
     apiA,
     apiB,
   }) => {
-    twoTenantsTest.fail(
-      true,
-      'SEG-G item 0 (PLANO-SEGURANCA): filtro de tenant desligado em request autenticado; tirar esta marca quando a SEG-G sair',
-    );
-
     const paidB = await setupPaidEvent(apiB);
     const adjustmentB = await apiIssueCredit(apiB, paidB.eventId, {
       installmentId: paidB.installmentId,

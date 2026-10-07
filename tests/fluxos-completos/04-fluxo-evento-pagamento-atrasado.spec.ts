@@ -68,8 +68,8 @@ test.describe('Fluxo de evento — pagamento atrasado e pendencia', () => {
     expect(planoApos!.installments[0].status).toBe('Overdue');
 
     // Lista operacional de pendências deve incluir esse evento (saldo > 0).
-    // Filtrada pelo cliente: com a SEG-G item 0 (PLANO-SEGURANCA) em aberto a
-    // lista traz eventos de todos os tenants e a primeira página não chega a ele.
+    // Filtrada pelo cliente: o tenant do `authApi` acumula eventos entre
+    // execuções, e a primeira página pode não chegar a ele.
     const pendencias = await apiListPendingPayments(authApi, { clientId: cliente.id });
     const items = pendencias.items ?? [];
     const meuEvento = items.find((p) => p.eventId === eventId);
