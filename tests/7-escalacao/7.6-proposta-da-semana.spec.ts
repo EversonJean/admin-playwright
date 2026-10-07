@@ -25,7 +25,7 @@ import { WEEK_STAFFING_ROUTE as ROUTE, addressAt, escapeRegExp, nextSaturday } f
 /**
  * Fluxo: 7.6 — Proposta da semana por IA, rascunho e aplicar em lote
  * Diagrama: docs/fluxos/negocio-7.6-proposta-da-semana.mmd
- * Plano: docs/implementar/PLANO-ESCALACAO-DA-SEMANA.md §7 (ESC-C, Etapa 216),
+ * Plano: docs/implementados/PLANO-ESCALACAO-DA-SEMANA.md §7 (ESC-C, Etapa 216),
  * §13 registro e2e E8, E9 e E10.
  *
  * O sistema aloca (solver determinístico, escassez primeiro) e a IA só

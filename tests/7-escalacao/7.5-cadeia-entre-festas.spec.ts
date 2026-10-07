@@ -23,7 +23,7 @@ import { WEEK_STAFFING_ROUTE as ROUTE, addressAt, escapeRegExp, nextSaturday } f
 /**
  * Fluxo: 7.5 — Deslocamento entre festas e material a bordo
  * Diagrama: docs/fluxos/negocio-7.5-cadeia-entre-festas.mmd
- * Plano: docs/implementar/PLANO-ESCALACAO-DA-SEMANA.md §6 (ESC-B, Etapa 215),
+ * Plano: docs/implementados/PLANO-ESCALACAO-DA-SEMANA.md §6 (ESC-B, Etapa 215),
  * §13 registro e2e E4, E5, E6 e E7.
  *
  * Regra da cadeia (decisão 15): entre duas festas do mesmo dia a perna A->B

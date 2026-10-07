@@ -27,7 +27,7 @@ import {
 /**
  * Fluxo: 7.4 — Escalação da semana
  * Diagrama: docs/fluxos/negocio-7.4-escalacao-da-semana.mmd
- * Plano: docs/implementar/PLANO-ESCALACAO-DA-SEMANA.md §5 (ESC-A, Etapa 214),
+ * Plano: docs/implementados/PLANO-ESCALACAO-DA-SEMANA.md §5 (ESC-A, Etapa 214),
  * §13 registro e2e E1, E2, E3 e E12.
  *
  * O quadro `/app/events/week-staffing` mostra as festas da semana (hoje ->
