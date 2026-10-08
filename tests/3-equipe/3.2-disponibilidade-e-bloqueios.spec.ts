@@ -1,5 +1,5 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
-import { apiCreateCollaborator } from '../../helpers/api-entities';
+import { apiCompleteOnboarding, apiCreateCollaborator } from '../../helpers/api-entities';
 
 /**
  * Fluxo: 3.2 — Disponibilidade e bloqueios
@@ -12,6 +12,10 @@ import { apiCreateCollaborator } from '../../helpers/api-entities';
 
 test.describe('Fluxo 3.2 — Disponibilidade e bloqueios', () => {
   test('@flow tela de detalhe do colaborador carrega autenticada', async ({ authPage, authApi }) => {
+    // Tenant recém-criado cai no assistente (onboardingGuard). Sem isto o
+    // `toHaveURL` só passava quando a primeira checagem vinha antes de o boot
+    // ler o /api/auth/me e redirecionar: corrida, não prova.
+    await apiCompleteOnboarding(authApi);
     const created = await apiCreateCollaborator(authApi);
     await authPage.goto(`/app/collaborators/${created.id}`);
     await expect(authPage).toHaveURL(new RegExp(`/app/collaborators/${created.id}`));

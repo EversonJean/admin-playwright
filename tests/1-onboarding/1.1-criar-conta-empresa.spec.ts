@@ -177,10 +177,16 @@ authTest.describe('Fluxo 1.1 — Recuperação de senha', () => {
     await authPage.goto(`/auth/reset-password?token=${resetToken}`);
     await authPage.getByTestId('reset-new-password').fill(novaSenha);
     await authPage.getByTestId('reset-confirm-password').fill(novaSenha);
+    // Espera a RESPOSTA do reset, nunca um tempo fixo: com a suíte inteira o
+    // hash da senha nova leva mais de 2 s, e o login abaixo chegava antes do
+    // commit e via a senha velha (2026-10-07, reset em 4 s).
+    const resetResponse = authPage.waitForResponse(
+      (r) => r.url().includes('/api/auth/reset-password') && r.request().method() === 'POST',
+    );
     await authPage.getByTestId('reset-submit').click();
+    expect((await resetResponse).ok()).toBe(true);
 
     // 4. Login com a senha NOVA via API confirma que o reset funcionou
-    await authPage.waitForTimeout(2000);
     const loginRes = await api.post('/api/auth/login', {
       data: { email: tenant.email, password: novaSenha },
     });

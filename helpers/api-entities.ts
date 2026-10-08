@@ -67,8 +67,21 @@ export async function apiCreateClient(
   return body.data ?? body;
 }
 
-/** POST /api/activities */
-export async function apiCreateActivity(api: APIRequestContext, overrides: Partial<ReturnType<typeof fakeActivity>> = {}): Promise<CreatedEntity> {
+/** Insumo vinculado à atividade (`ActivityProductInputDto`). */
+export interface ActivityProductInput {
+  productId: string;
+  qtyPerChild: number;
+  isChecklistOnly: boolean;
+}
+
+/**
+ * POST /api/activities. `activityProducts` vincula insumos: com
+ * `feature_stock`, o aceite do orçamento reserva os consumíveis para o evento.
+ */
+export async function apiCreateActivity(
+  api: APIRequestContext,
+  overrides: Partial<ReturnType<typeof fakeActivity>> & { activityProducts?: ActivityProductInput[] } = {},
+): Promise<CreatedEntity> {
   const fake = { ...fakeActivity(), ...overrides };
   const res = await api.post('/api/activities', {
     data: {
@@ -82,7 +95,7 @@ export async function apiCreateActivity(api: APIRequestContext, overrides: Parti
       minAge: fake.minAgeYears,
       maxAge: fake.maxAgeYears,
       // DTO atual exige a lista (vazia = atividade sem insumos vinculados).
-      activityProducts: [],
+      activityProducts: overrides.activityProducts ?? [],
     },
   });
   await expectOk(res, 'apiCreateActivity');
@@ -113,8 +126,15 @@ export async function apiCreateProduct(
   return body.data ?? body;
 }
 
-/** POST /api/collaborators */
-export async function apiCreateCollaborator(api: APIRequestContext, overrides: Partial<ReturnType<typeof fakeCollaborator>> = {}): Promise<CreatedEntity> {
+/**
+ * POST /api/collaborators. `address` troca o endereço padrão (sem
+ * coordenada) — por exemplo, por um com `latitude`/`longitude` para o
+ * deslocamento medido pelo fake do Google.
+ */
+export async function apiCreateCollaborator(
+  api: APIRequestContext,
+  overrides: Partial<ReturnType<typeof fakeCollaborator>> & { address?: Record<string, unknown> } = {},
+): Promise<CreatedEntity> {
   const fake = { ...fakeCollaborator(), ...overrides };
   const res = await api.post('/api/collaborators', {
     data: {
@@ -122,7 +142,7 @@ export async function apiCreateCollaborator(api: APIRequestContext, overrides: P
       role: 'Recreador',
       email: fake.email,
       phone: fake.phone,
-      address: fakeAddress(),
+      address: overrides.address ?? fakeAddress(),
     },
   });
   await expectOk(res, 'apiCreateCollaborator');
@@ -203,6 +223,25 @@ export async function apiCreateSkill(
   return body.data ?? body;
 }
 
+/**
+ * A habilidade do catálogo do tenant com este nome; cria se não existe. O
+ * catálogo do tenant novo já nasce com as habilidades padrão (ex.: "Pintura
+ * facial"), e o POST de uma delas é 409 `Skill.AlreadyExists`.
+ */
+export async function apiFindOrCreateSkill(
+  api: APIRequestContext,
+  name: string,
+): Promise<CreatedEntity & { name: string }> {
+  const res = await api.get('/api/skills');
+  await expectOk(res, 'GET /api/skills');
+  const body = await res.json();
+  const data = body.data ?? body;
+  const items = (Array.isArray(data) ? data : (data.items ?? [])) as Array<CreatedEntity & { name: string }>;
+  const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, '').toLowerCase();
+  const found = items.find((s) => norm(s.name) === norm(name));
+  return found ?? (await apiCreateSkill(api, { name }));
+}
+
 /** POST /api/collaborators/:id/skills — vincula uma habilidade do catálogo ao colaborador. */
 export async function apiAddCollaboratorSkill(
   api: APIRequestContext,
@@ -244,6 +283,67 @@ export async function apiCreateContactIdentity(
   await expectOk(res, 'apiCreateContactIdentity');
   const body = await res.json();
   return body.data ?? body;
+}
+
+/**
+ * PUT /api/ai/features/{code} — liga/desliga um card de IA do tenant (Central
+ * de IA). Exige `feature_ai` no tenant (`enableFeatureFlagDirect`).
+ */
+export async function apiSetAiFeature(
+  api: APIRequestContext,
+  code: string,
+  enabled: boolean,
+  configJson: string | null = null,
+): Promise<void> {
+  const res = await api.put(`/api/ai/features/${code}`, { data: { enabled, configJson } });
+  await expectOk(res, `apiSetAiFeature(${code})`);
+}
+
+/**
+ * PUT /api/stock/locations/{id} trocando só o que o teste passa (endereço,
+ * nome): lê o detalhe e regrava os demais campos como estão. Exige
+ * `feature_stock`. O Local Principal ignora tipo e responsável na mutação.
+ */
+export async function apiUpdateStockLocation(
+  api: APIRequestContext,
+  locationId: string,
+  changes: { name?: string; address?: Record<string, unknown> | null },
+): Promise<void> {
+  const getRes = await api.get(`/api/stock/locations/${locationId}`);
+  await expectOk(getRes, 'GET /api/stock/locations/{id}');
+  const body = await getRes.json();
+  const current = (body.data ?? body) as {
+    name: string;
+    type: string;
+    collaboratorId: string | null;
+    address: Record<string, unknown> | null;
+    notes: string | null;
+    status: string;
+  };
+  const res = await api.put(`/api/stock/locations/${locationId}`, {
+    data: {
+      name: changes.name ?? current.name,
+      type: current.type,
+      collaboratorId: current.collaboratorId,
+      address: changes.address !== undefined ? changes.address : current.address,
+      notes: current.notes,
+      status: current.status,
+    },
+  });
+  await expectOk(res, 'apiUpdateStockLocation');
+}
+
+/**
+ * PUT /api/events/{eventId}/departure-location — de onde sai o material da
+ * festa (Etapa 219); `null` volta ao local da reserva. Exige `feature_stock`.
+ */
+export async function apiSetEventDepartureLocation(
+  api: APIRequestContext,
+  eventId: string,
+  stockLocationId: string | null,
+): Promise<void> {
+  const res = await api.put(`/api/events/${eventId}/departure-location`, { data: { stockLocationId } });
+  await expectOk(res, 'apiSetEventDepartureLocation');
 }
 
 /** GET /api/clients — útil pra validar listagem após criar */

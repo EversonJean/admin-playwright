@@ -169,7 +169,7 @@ test.describe('AJ-A / Etapa 194 — rules the user saw broken', () => {
     tenant,
   }) => {
     enableFeatureFlagDirect(tenant.tenantId, 'feature_whatsapp');
-    seedWhatsappChannelDirect(tenant.tenantId);
+    const phoneNumberId = seedWhatsappChannelDirect(tenant.tenantId);
     await apiCompleteOnboarding(authApi);
 
     // Telefones únicos por execução (celular de Curitiba, 9 dígitos).
@@ -190,7 +190,12 @@ test.describe('AJ-A / Etapa 194 — rules the user saw broken', () => {
     // Uma conversa por telefone, pelo webhook real (HMAC do fake). O resolver
     // casa o telefone com o ponto de contato e liga a conversa à identidade.
     for (const phone of [survivorPhone, absorbedPhoneA, absorbedPhoneB]) {
-      const hook = await fakeWhatsApp.triggerWebhook({ kind: 'inbound', phone, text: 'Oi, quero orçamento' });
+      const hook = await fakeWhatsApp.triggerWebhook({
+        kind: 'inbound',
+        phoneNumberId,
+        phone,
+        text: 'Oi, quero orçamento',
+      });
       expect(hook.backStatus, `webhook inbound ${phone}: ${hook.backBody}`).toBe(200);
     }
 

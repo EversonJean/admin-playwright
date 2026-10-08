@@ -16,8 +16,8 @@ import { assertOk, unwrapList } from '../../helpers/response';
  *   2. Com `feature_whatsapp` e `whatsapp.read` (o dono do tenant tem), o
  *      painel carrega pelo endpoint, com 200.
  *
- * A conversa nasce pelo webhook de entrada assinado do fake (o canal
- * `fake_phone` é ligado no tenant), por isso os testes rodam em série.
+ * A conversa nasce pelo webhook de entrada assinado do fake, no canal próprio
+ * do tenant (id devolvido pelo `seedWhatsappChannelDirect` e passado ao fake).
  *
  * Sem diagrama `.mmd`: verificação de plano de ajustes.
  */
@@ -26,9 +26,14 @@ test.describe.configure({ mode: 'serial' });
 
 /** Conversa criada por mensagem de entrada do fake, no tenant do canal. */
 async function inboundConversation(api: APIRequestContext, tenantId: string): Promise<string> {
-  seedWhatsappChannelDirect(tenantId);
+  const phoneNumberId = seedWhatsappChannelDirect(tenantId);
   const phone = `+55419${String(Date.now()).slice(-7)}${Math.floor(Math.random() * 10)}`;
-  const hook = await fakeWhatsApp.triggerWebhook({ kind: 'inbound', phone, text: 'Oi, quero um orçamento' });
+  const hook = await fakeWhatsApp.triggerWebhook({
+    kind: 'inbound',
+    phoneNumberId,
+    phone,
+    text: 'Oi, quero um orçamento',
+  });
   expect(hook.backStatus, `webhook inbound: ${hook.backBody}`).toBe(200);
 
   const res = await api.get('/api/conversations?page=1&pageSize=50');

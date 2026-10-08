@@ -50,6 +50,14 @@ export interface CreateBudgetInput {
    * `isPartner`) e a família vai em `partnerSaleCustomer`. Omitido = venda direta.
    */
   partnerSale?: { endCustomerName?: string; celebrantName?: string; celebrantAge?: number };
+  /**
+   * Endereço estruturado (`AddressDto`, com `latitude`/`longitude` quando o
+   * teste mede deslocamento). Vai para o evento no aceite se o corpo do aceite
+   * mandar `address: null` ("manter o do orçamento").
+   */
+  address?: Record<string, unknown>;
+  /** Equipe contratada; vira o `TeamSize` do evento no aceite. Default 2. */
+  teamSize?: number;
 }
 
 function todayPlus(days: number): string {
@@ -58,21 +66,41 @@ function todayPlus(days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Validade padrão: hoje + 14, mas nunca depois da véspera da festa
+ * (`Budget.ValidUntilAfterEventDate`: no máximo 1 dia antes). Festa desta
+ * semana (escalação da semana) cairia fora com o +14 fixo.
+ *
+ * Festa de hoje (ou de amanhã, quando a véspera já passou no relógio do back)
+ * não tem validade possível: a véspera fica antes de hoje. Quem precisa dela
+ * passa pelo `setupAcceptedEvent`, que cria no futuro e move a data depois do
+ * aceite (`apiPatchEvent`).
+ */
+function defaultValidUntil(eventDate: string): string {
+  const standard = todayPlus(14);
+  const eve = new Date(`${eventDate}T00:00:00Z`);
+  eve.setUTCDate(eve.getUTCDate() - 1);
+  const dayBefore = eve.toISOString().slice(0, 10);
+  return dayBefore < standard ? dayBefore : standard;
+}
+
 export async function apiCreateBudget(
   api: APIRequestContext,
   input: CreateBudgetInput,
 ): Promise<CreatedEntity> {
+  const eventDate = input.eventDate ?? todayPlus(30);
   const body = {
     clientId: input.clientId,
-    eventDate: input.eventDate ?? todayPlus(30),
+    eventDate,
     // Omitida no payload = evento de um dia (retrocompat do contrato).
     ...(input.eventEndDate ? { eventEndDate: input.eventEndDate } : {}),
     eventStartTime: input.startTime ?? '14:00',
     eventEndTime: input.endTime ?? '18:00',
     eventLocation: input.eventLocation ?? 'Salão de festas E2E, Curitiba',
     childrenCount: input.childrenCount ?? 15,
-    validUntil: input.validUntilDate ?? todayPlus(14),
-    teamSize: 2,
+    validUntil: input.validUntilDate ?? defaultValidUntil(eventDate),
+    ...(input.address ? { address: input.address } : {}),
+    teamSize: input.teamSize ?? 2,
     teamPricePerCollaborator: 200,
     displacementFee: 0,
     items: input.activityIds.map((id) => ({ activityId: id, quantity: 1 })),
@@ -275,6 +303,34 @@ export async function apiGetEvent(
   const res = await api.get(`/api/events/${eventId}`);
   await expectOk(res, 'apiGetEvent');
   return unwrap(await res.json());
+}
+
+/**
+ * Corpo do `PATCH /api/events/{id}` (`PatchEventDto`): só o que vier preenchido
+ * é aplicado. Mudando só `eventDate`, o domínio desloca o `endDate` mantendo a
+ * diferença de dias.
+ */
+export interface PatchEventInput {
+  eventDate?: string; // YYYY-MM-DD
+  startTime?: string; // HH:mm
+  endTime?: string; // HH:mm
+  location?: string;
+  childrenCount?: number;
+  endDate?: string; // YYYY-MM-DD
+}
+
+/**
+ * PATCH /api/events/{id} — o mesmo do arrastar no calendário. É o caminho para
+ * uma festa de hoje: o orçamento não aceita data cuja véspera já passou, então
+ * a festa nasce no futuro e a data se move depois do aceite.
+ */
+export async function apiPatchEvent(
+  api: APIRequestContext,
+  eventId: string,
+  input: PatchEventInput,
+): Promise<void> {
+  const res = await api.patch(`/api/events/${eventId}`, { data: input });
+  await expectOk(res, 'apiPatchEvent');
 }
 
 export async function apiAssignCollaborator(
