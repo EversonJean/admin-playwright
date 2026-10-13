@@ -22,7 +22,7 @@ import {
 
 /**
  * Fluxo: 5.7 — Orçamento enviado por WhatsApp pelo canal da empresa
- * Diagrama: — (cenário E146 do registro e2e de `docs/implementar/PLANO-SEGURANCA.md`)
+ * Diagrama: — (cenário E146 do registro e2e de `docs/implementados/PLANO-SEGURANCA.md`)
  *
  * Fonte do comportamento: PLANO-SEGURANCA §5b (SEG-C2, Etapa 242), item 1 (o
  * envio sai pelo número e pelo token do canal do tenant) e o "além do plano" da

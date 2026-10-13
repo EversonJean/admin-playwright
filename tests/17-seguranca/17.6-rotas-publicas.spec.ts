@@ -48,7 +48,7 @@ import { snack } from '../../helpers/ui';
 /**
  * Fluxo: 17.6 — Rotas públicas: saída escapada, tenant fechado e links com hash
  * Diagrama: — (cenários E7, E8, E11, E30 e E61 a E67 do registro e2e de
- * `docs/implementar/PLANO-SEGURANCA.md`)
+ * `docs/implementados/PLANO-SEGURANCA.md`)
  *
  * Fonte do comportamento: PLANO-SEGURANCA §6 (SEG-D, toda saída escapada), §9
  * (SEG-G, filtro de tenant fechado por padrão) e §10 (SEG-H, links públicos com

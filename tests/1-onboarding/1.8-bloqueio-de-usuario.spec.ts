@@ -8,7 +8,7 @@ import { RoleSession, loginAsRole, openSessionPage } from '../../helpers/setup-f
 
 /**
  * Fluxo: 1.8 — Bloqueio e desbloqueio de usuário pela lista de usuários
- * Diagrama: — (cenário E96 do registro e2e de `docs/implementar/PLANO-SEGURANCA.md`)
+ * Diagrama: — (cenário E96 do registro e2e de `docs/implementados/PLANO-SEGURANCA.md`)
  *
  * Fonte do comportamento: PLANO-SEGURANCA §8 (SEG-F): item 2 (`PUT
  * /api/users/{id}/status` com `users.update`; `Users.CannotBlockSelf`,

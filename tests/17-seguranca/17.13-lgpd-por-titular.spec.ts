@@ -38,7 +38,7 @@ import {
 /**
  * Fluxo: 17.13 — LGPD por titular: buscar, exportar e anonimizar
  * Diagrama: — (cenários E162-E168 do registro e2e de
- * `docs/implementar/PLANO-SEGURANCA.md`, §14 SEG-L, Etapa 241)
+ * `docs/implementados/PLANO-SEGURANCA.md`, §14 SEG-L, Etapa 241)
  *
  * O titular (família, criança, contato de WhatsApp) não tem login: chega pelo
  * telefone ou pelo e-mail. A tela é Configurações → Privacidade → "Titulares de

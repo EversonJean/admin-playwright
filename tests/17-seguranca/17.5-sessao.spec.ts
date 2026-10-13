@@ -36,7 +36,7 @@ import { msUntilTimeStep, totpCode, totpTimeStep } from '../../helpers/totp';
 /**
  * Fluxo: 17.5 — Sessão, MFA obrigatório e tokens de uso único
  * Diagrama: — (cenários E4, E5, E12, E40-E44, E53-E56 e E81-E86 do registro e2e
- * de `docs/implementar/PLANO-SEGURANCA.md`)
+ * de `docs/implementados/PLANO-SEGURANCA.md`)
  *
  * Fonte do comportamento: PLANO-SEGURANCA §4 (SEG-B, MFA exigido pelo servidor),
  * §11 (SEG-I, sessão e tokens de uso único) e §13 (SEG-K, sessão em cookie

@@ -17,7 +17,7 @@ import { apiErrorCodes, assertOk, readJson, unwrapList } from '../../helpers/res
 /**
  * Fluxo: 17.8 — Limites de entrada e abuso anônimo
  * Diagrama: — (cenários E114, E115, E116, E118, E120 e E121 do registro e2e de
- * `docs/implementar/PLANO-SEGURANCA.md`)
+ * `docs/implementados/PLANO-SEGURANCA.md`)
  *
  * Fonte do comportamento: PLANO-SEGURANCA §12 (SEG-J): itens 1 (tetos do pedido
  * público de ingresso e reservas em aberto por telefone), 2 (DOCX na importação

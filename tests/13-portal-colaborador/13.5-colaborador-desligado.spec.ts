@@ -17,7 +17,7 @@ import { openSessionPage, portalDeclineEvent, setupAcceptedEvent, setupPortalUse
 /**
  * Fluxo: 13.5 — Colaborador desligado, escala recusada e fronteira do portal
  * Diagrama: docs/fluxos/negocio-13-portal-do-colaborador.mmd
- * (cenários E92 a E95 do registro e2e de `docs/implementar/PLANO-SEGURANCA.md`)
+ * (cenários E92 a E95 do registro e2e de `docs/implementados/PLANO-SEGURANCA.md`)
  *
  * Fonte do comportamento: PLANO-SEGURANCA §8 (SEG-F): item 1 (colaborador
  * inativo perde o portal com 403 `Portal.NotLinked`; o evento de desligamento

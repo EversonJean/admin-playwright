@@ -30,7 +30,7 @@ import { fakeCpf, fakeTenant, formatCpf } from '../../helpers/test-data';
 /**
  * Fluxo: 17.9 — Toda saída escapada: editor, IA, e-mail, CSV e prévia de PDF
  * Diagrama: — (cenários E103 a E107 do registro e2e de
- * `docs/implementar/PLANO-SEGURANCA.md`)
+ * `docs/implementados/PLANO-SEGURANCA.md`)
  *
  * Fonte do comportamento: PLANO-SEGURANCA §6 (SEG-D): itens 1 (renderer de
  * e-mail codifica todo valor uma vez, assunto em texto puro), 3 (sanitização do

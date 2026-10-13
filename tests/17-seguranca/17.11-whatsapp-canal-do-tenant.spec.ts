@@ -47,7 +47,7 @@ import {
 /**
  * Fluxo: 17.11 — WhatsApp pelo canal do tenant e modelos por WABA
  * Diagrama: — (cenários E140 a E145, E147 e E151 do registro e2e de
- * `docs/implementar/PLANO-SEGURANCA.md`; o E146 está em
+ * `docs/implementados/PLANO-SEGURANCA.md`; o E146 está em
  * `tests/5-orcamento/5.7-orcamento-por-whatsapp.spec.ts`)
  *
  * Fonte do comportamento: PLANO-SEGURANCA §5b (SEG-C2, Etapa 242): item 1 (o

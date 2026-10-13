@@ -40,7 +40,7 @@ import {
  * Fluxo: 17.12 — IA: SSRF do provedor BYOK, chave na troca de endereço, step-up e
  * confirmação das escritas do assistente
  * Diagrama: — (cenários E152-E155, E157 e E158 do registro e2e de
- * `docs/implementar/PLANO-SEGURANCA.md`, §7 SEG-E, Etapa 240; o E156 é manual)
+ * `docs/implementados/PLANO-SEGURANCA.md`, §7 SEG-E, Etapa 240; o E156 é manual)
  *
  * [NOTA] O provedor BYOK com endereço interno é recusado em TODO ambiente,
  * inclusive no E2E: nenhum provedor do tenant aponta para o fake em `localhost`.

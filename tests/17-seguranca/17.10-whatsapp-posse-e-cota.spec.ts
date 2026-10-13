@@ -36,7 +36,7 @@ import {
 /**
  * Fluxo: 17.10 — WhatsApp: posse do número, cota diária e vínculo
  * Diagrama: — (cenários E129 a E135 do registro e2e de
- * `docs/implementar/PLANO-SEGURANCA.md`)
+ * `docs/implementados/PLANO-SEGURANCA.md`)
  *
  * Fonte do comportamento: PLANO-SEGURANCA §5 (SEG-C, Etapa 239) e a decisão D8:
  * item 3 (cota diária persistida por tenant, 100 em teste e 1.000 no pago, 409

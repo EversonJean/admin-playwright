@@ -13,7 +13,7 @@ import { RoleSession, loginAsRole, openSessionPage, setupAcceptedEvent } from '.
 
 /**
  * Fluxo: 14.5 — Ações por permissão: Financial só leitura e fila de mídia por dono
- * Diagrama: — (cenários E97 e E98 do registro e2e de `docs/implementar/PLANO-SEGURANCA.md`)
+ * Diagrama: — (cenários E97 e E98 do registro e2e de `docs/implementados/PLANO-SEGURANCA.md`)
  *
  * Fonte do comportamento: PLANO-SEGURANCA §8 (SEG-F): item 5 (`api/media-jobs/{id}`
  * só para quem pediu ou Owner/Admin, 404 para os outros), item 6 (dispensar e

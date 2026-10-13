@@ -18,7 +18,7 @@ import { fakeCnpj, fakeCpf, formatCnpj, formatCpf } from '../../helpers/test-dat
 /**
  * Fluxo: 17.7 — Dados pessoais cifrados: documento do cliente e formulário pós-aceite
  * Diagrama: — (cenários E72 a E75 do registro e2e de
- * `docs/implementar/PLANO-SEGURANCA.md`)
+ * `docs/implementados/PLANO-SEGURANCA.md`)
  *
  * Fonte do comportamento: PLANO-SEGURANCA §14 itens 3 e 4 (SEG-L, criptografia
  * autenticada; CPF/CNPJ e restrições cifrados, busca pelo hash do documento
