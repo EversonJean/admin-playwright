@@ -10,7 +10,8 @@ import {
 } from '../../helpers/api-client';
 import { apiCompleteOnboarding } from '../../helpers/api-entities';
 import { apiAssignCollaborator } from '../../helpers/api-event-flow';
-import { enableFeatureFlagDirect } from '../../helpers/db-helper';
+import { countMagicLinkTokensDirect, enableFeatureFlagDirect } from '../../helpers/db-helper';
+import { FakeEmailEntry, fakeEmail } from '../../helpers/fake-providers';
 import { apiErrorCodes, assertOk, readJson } from '../../helpers/response';
 import { openSessionPage, portalDeclineEvent, setupAcceptedEvent, setupPortalUser } from '../../helpers/setup-flows';
 
@@ -83,6 +84,62 @@ function isoDay(offsetDays: number): string {
   return new Date(Date.now() + offsetDays * 86_400_000).toISOString().slice(0, 10);
 }
 
+interface AnonCall {
+  status: number;
+  codes: string[];
+  body: Record<string, unknown>;
+}
+
+/** POST anônimo num contexto novo e descartado (o jar de cookies não passa de uma chamada a outra). */
+async function postAnon(path: string, data: unknown): Promise<AnonCall> {
+  const anon = await createApiContext();
+  try {
+    const res = await anon.post(path, { data });
+    const text = await res.text();
+    const parsed = (text ? JSON.parse(text) : {}) as {
+      data?: Record<string, unknown>;
+      errors?: Array<{ code: string }>;
+    };
+    return {
+      status: res.status(),
+      codes: (parsed.errors ?? []).map((e) => e.code),
+      body: (parsed.data ?? parsed) as Record<string, unknown>,
+    };
+  } finally {
+    await anon.dispose();
+  }
+}
+
+async function emailsTo(to: string): Promise<FakeEmailEntry[]> {
+  return fakeEmail.emails({ to: to.toLowerCase() });
+}
+
+/** Token do link mágico de um e-mail do fake; undefined se o e-mail não traz link. */
+function magicLinkToken(mail: FakeEmailEntry): string | undefined {
+  const href = mail.bodyHtml.match(/href="([^"]*\/auth\/magic-link\/consume\?token=[^"]+)"/)?.[1];
+  return href ? (new URL(href.replace(/&amp;/g, '&')).searchParams.get('token') ?? undefined) : undefined;
+}
+
+/** Espera um e-mail novo (id fora de `seen`) que satisfaça `match`. */
+async function waitNewEmail(
+  to: string,
+  seen: Set<string>,
+  match: (mail: FakeEmailEntry) => boolean,
+  what: string,
+): Promise<FakeEmailEntry> {
+  let found: FakeEmailEntry | undefined;
+  await expect
+    .poll(
+      async () => {
+        found = (await emailsTo(to)).find((m) => !seen.has(m.id) && match(m));
+        return found !== undefined;
+      },
+      { timeout: 30_000, intervals: [500, 1_000], message: `${what} para ${to}` },
+    )
+    .toBe(true);
+  return found!;
+}
+
 test.describe('Fluxo 13.6 — Colaborador desligado e escala recusada', () => {
   test('E92 @flow gestor inativa o colaborador: o portal dá 403 Portal.NotLinked, a renovação dá 401 e a tela sai do portal; reativado, entra de novo', async ({
     authApi,
@@ -148,6 +205,93 @@ test.describe('Fluxo 13.6 — Colaborador desligado e escala recusada', () => {
       }
     } finally {
       await context.close();
+      await portal.portalApi.dispose();
+    }
+  });
+
+  // Revisão pós-merge do plano B (2026-10-13, `PortalCollaboratorAccessGuard`):
+  // colaborador inativo não abre sessão nova, por senha nem por link mágico;
+  // reativado, entra de novo sem desbloqueio.
+  test('@flow inactive collaborator opens no session: right password gives 401 Auth.UserNotActive (wrong one stays Auth.InvalidCredentials), the magic link request gives 204 with no token and no e-mail, a link issued before is Auth.MagicLinkInvalid; reactivated, login works again', async ({
+    authApi,
+    tenant,
+  }) => {
+    test.setTimeout(150_000);
+    const portal = await setupPortalUser(authApi, tenant.tenantId);
+    try {
+      // Link mágico emitido com o colaborador ainda ativo.
+      const seenBefore = new Set((await emailsTo(portal.email)).map((m) => m.id));
+      const early = await postAnon('/api/auth/magic-link', { email: portal.email });
+      expect(early.status, 'pedido de link com o colaborador ativo').toBe(204);
+      const earlyMail = await waitNewEmail(
+        portal.email,
+        seenBefore,
+        (m) => magicLinkToken(m) !== undefined,
+        'link mágico antes da inativação',
+      );
+      const earlyToken = magicLinkToken(earlyMail)!;
+      const tokensBefore = countMagicLinkTokensDirect(portal.email);
+
+      await setCollaboratorStatus(authApi, portal.collaboratorId, 'Inactive');
+
+      // Senha errada: a mesma resposta de sempre (o estado da conta só aparece a quem prova a senha).
+      const wrong = await postAnon('/api/auth/login', { email: portal.email, password: 'Senha-errada-1!' });
+      expect(wrong.status, 'senha errada').toBe(401);
+      expect(wrong.codes, 'senha errada').toEqual(['Auth.InvalidCredentials']);
+
+      const right = await postAnon('/api/auth/login', { email: portal.email, password: PORTAL_PASSWORD });
+      expect(right.status, 'senha certa, colaborador inativo').toBe(401);
+      expect(right.codes, 'senha certa, colaborador inativo').toContain('Auth.UserNotActive');
+      expect(right.body.accessToken, 'sem access token').toBeUndefined();
+
+      // Pedido de link: resposta neutra, nenhum token emitido...
+      const seenInactive = new Set((await emailsTo(portal.email)).map((m) => m.id));
+      const denied = await postAnon('/api/auth/magic-link', { email: portal.email });
+      expect(denied.status, 'pedido de link com o colaborador inativo').toBe(204);
+      expect(countMagicLinkTokensDirect(portal.email), 'nenhum link novo emitido').toBe(tokensBefore);
+      // ...e nenhum e-mail com link. Barreira: o reset de senha sai do mesmo jeito
+      // (envio fora do caminho da resposta); quando ele chega, o link já teria chegado.
+      const barrier = await postAnon('/api/auth/forgot-password', { email: portal.email });
+      expect(barrier.status, 'pedido de reset da barreira').toBeLessThan(300);
+      const barrierMail = await waitNewEmail(
+        portal.email,
+        seenInactive,
+        (m) => m.bodyHtml.includes('/reset-password?token='),
+        'e-mail de reset (barreira)',
+      );
+      const newMails = (await emailsTo(portal.email)).filter((m) => !seenInactive.has(m.id) && m.id !== barrierMail.id);
+      expect(
+        newMails.filter((m) => magicLinkToken(m) !== undefined),
+        'nenhum e-mail de link mágico com o colaborador inativo',
+      ).toHaveLength(0);
+
+      // O link emitido antes da inativação não abre sessão.
+      const consumed = await postAnon('/api/auth/magic-link/consume', { token: earlyToken });
+      expect(consumed.status, 'link anterior à inativação').toBe(401);
+      expect(consumed.codes, 'link anterior à inativação').toContain('Auth.MagicLinkInvalid');
+
+      // O desligamento é assíncrono (troca o SecurityStamp, como no E92): esperar
+      // que ele termine antes de reativar, senão ele derrubaria a sessão nova.
+      await expect
+        .poll(async () => (await portal.portalApi.get('/api/portal/my-events')).status(), {
+          message: 'o desligamento troca o SecurityStamp',
+          timeout: 60_000,
+          intervals: [1_000, 2_000],
+        })
+        .toBe(401);
+
+      // Reativado: o login volta, sem desbloqueio manual.
+      await setCollaboratorStatus(authApi, portal.collaboratorId, 'Active');
+      const again = await postAnon('/api/auth/login', { email: portal.email, password: PORTAL_PASSWORD });
+      expect(again.status, 'login depois de reativar').toBe(200);
+      expect(again.codes).toEqual([]);
+      const againApi = await createBearerApiContext(String(again.body.accessToken));
+      try {
+        expect((await againApi.get('/api/portal/my-events')).status(), 'portal depois de reativar').toBe(200);
+      } finally {
+        await againApi.dispose();
+      }
+    } finally {
       await portal.portalApi.dispose();
     }
   });

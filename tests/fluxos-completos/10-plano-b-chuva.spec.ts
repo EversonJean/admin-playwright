@@ -1,12 +1,14 @@
 import { APIRequestContext } from '@playwright/test';
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { twoTenantsTest } from '../../fixtures/two-tenants.fixture';
+import { createApiContext, createBearerApiContext, loginViaApi } from '../../helpers/api-client';
 import {
   apiCompleteOnboarding,
   apiCreateCollaborator,
   apiCreateProduct,
   apiListNotifications,
   apiSetAiFeature,
+  apiSetCollaboratorStatus,
   apiSetSettingParameter,
 } from '../../helpers/api-entities';
 import {
@@ -496,6 +498,58 @@ test.describe('Fluxo completo 10 — Plano B de chuva', () => {
     } finally {
       await team.portal.api.dispose();
       await manager.api.dispose();
+    }
+  });
+
+  // Revisão pós-merge do plano B (2026-10-13, `EventRainPlanDayAppService`): o
+  // colaborador inativado mantém o usuário do Portal ativo, e o aviso o alcançava.
+  test('@flow activating the plan tells the assigned team but not a collaborator inactivated after being assigned', async ({
+    authApi,
+    tenant,
+  }) => {
+    test.setTimeout(180_000);
+    const s = uniqueSuffix();
+    const indoor = await apiCreateRainActivity(authApi, `Mímica ${s}`, { indoorSuitability: 'Indoor' });
+    const party = await setupRainParty(authApi);
+    await apiPutRainPlan(authApi, party.eventId, [{ activityId: indoor.id }]);
+    const kept = await setupConfirmedPortalCollaborator(authApi, tenant.tenantId, party.eventId);
+    const gone = await setupConfirmedPortalCollaborator(authApi, tenant.tenantId, party.eventId, { isLeader: false });
+
+    const activatedTo = async (api: APIRequestContext) =>
+      (await apiListNotifications(api)).filter(
+        (n) => n.type === 'RainPlanActivated' && n.contextEntityId === party.eventId,
+      ).length;
+
+    try {
+      await apiSetCollaboratorStatus(authApi, gone.collaboratorId, 'Inactive');
+      // O desligamento é assíncrono (troca o SecurityStamp): esperar que termine,
+      // para a sessão aberta depois da reativação não cair no meio da conferência.
+      await expect
+        .poll(async () => (await gone.portal.api.get('/api/notifications?pageSize=1')).status(), {
+          message: 'o desligamento troca o SecurityStamp',
+          timeout: 60_000,
+          intervals: [1_000, 2_000],
+        })
+        .toBe(401);
+
+      await apiActivateRainPlan(authApi, party.eventId, 'Chuva forte');
+
+      // Barreira: o escalado ativo recebe o aviso; o do inativo já teria saído junto.
+      await expect.poll(() => activatedTo(kept.portal.api), { message: 'escalado ativo' }).toBe(1);
+
+      // Reativado só para ler o próprio sino: nenhum "Plano B ativado" da festa.
+      await apiSetCollaboratorStatus(authApi, gone.collaboratorId, 'Active');
+      const anon = await createApiContext();
+      const tokens = await loginViaApi(anon, gone.portal.email, 'Dev12345!').finally(() => anon.dispose());
+      const goneApi = await createBearerApiContext(tokens.accessToken);
+      try {
+        expect(await activatedTo(goneApi), 'colaborador inativado no momento da ativação').toBe(0);
+      } finally {
+        await goneApi.dispose();
+      }
+    } finally {
+      await kept.portal.api.dispose();
+      await gone.portal.api.dispose();
     }
   });
 

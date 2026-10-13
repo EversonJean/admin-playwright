@@ -2,6 +2,7 @@ import { APIRequestContext } from '@playwright/test';
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { apiCreateCollaborator } from '../../helpers/api-entities';
 import { createBearerApiContext, signupNewTenant } from '../../helpers/api-client';
+import { apiAssignCollaborator } from '../../helpers/api-event-flow';
 import {
   apiCreateRainActivity,
   apiPutRainPlan,
@@ -11,7 +12,7 @@ import {
   uniqueSuffix,
 } from '../../helpers/rain-plan';
 import { apiErrorCodes, assertOk, readJson } from '../../helpers/response';
-import { loginPortalCollaborator, openSessionPage } from '../../helpers/setup-flows';
+import { loginPortalCollaborator, openSessionPage, portalDeclineEvent } from '../../helpers/setup-flows';
 
 /**
  * Fluxo: 13.5 — Plano B de chuva no Portal do colaborador
@@ -19,7 +20,8 @@ import { loginPortalCollaborator, openSessionPage } from '../../helpers/setup-fl
  * `GET /api/portal/my-events/{id}/rain-plan` confere a escala; não escalado,
  * sem plano ou com plano em rascunho respondem o mesmo `EventRainPlan.NotFound`
  * (404), e o card "Plano B (chuva)" some sem esconder a tela.
- * Registro e2e: E21.
+ * Registro e2e: E21. Revisão pós-merge (2026-10-13): escala `Declined` ou
+ * `Canceled` também recebe esse 404, como no detalhe, briefing e roteiro.
  *
  * Sem diagrama `.mmd`: verificação de plano.
  */
@@ -125,6 +127,53 @@ test.describe('Fluxo 13.5 — Plano B de chuva no Portal', () => {
       await unassigned.portal.api.dispose();
       await outsider.api.dispose();
       await otherApi.dispose();
+    }
+  });
+
+  // Revisão pós-merge do plano B (2026-10-13, `PortalRainPlanAppService`): o
+  // plano se lê como o roteiro publicado, só com escala `Pending`/`Confirmed`.
+  test('@flow a collaborator who declined the assignment gets the same 404 on the ready plan and the Portal shows no "Plano B (chuva)" card', async ({
+    authApi,
+    browser,
+    tenant,
+  }) => {
+    test.setTimeout(180_000);
+    const s = uniqueSuffix();
+    const indoor = await apiCreateRainActivity(authApi, `Mímica ${s}`, { indoorSuitability: 'Indoor' });
+    const party = await setupRainParty(authApi);
+    await apiPutRainPlan(
+      authApi,
+      party.eventId,
+      [{ activityId: indoor.id, replacesActivityId: party.contracted.id }],
+      'Usar a garagem do prédio',
+    );
+    const collaborator = await apiCreateCollaborator(authApi);
+    await apiAssignCollaborator(authApi, party.eventId, collaborator.id);
+    const portal = await loginPortalCollaborator(tenant.tenantId, collaborator.id);
+
+    try {
+      // Escala pendente: o plano pronto aparece.
+      const before = await portal.api.get(`/api/portal/my-events/${party.eventId}/rain-plan`);
+      await assertOk(before, 'GET portal rain-plan (escala pendente)');
+      expect((await readJson<{ status: string }>(before)).status).toBe('Ready');
+
+      await portalDeclineEvent(portal.api, party.eventId);
+
+      await expectSameNotFound(portal.api, party.eventId, 'escala recusada, plano pronto');
+
+      const view = await openSessionPage(browser, portal.tokens);
+      try {
+        const detailAnswered = view.page.waitForResponse((r) =>
+          r.url().includes(`/api/portal/my-events/${party.eventId}`),
+        );
+        await view.page.goto(`/portal/events/${party.eventId}`);
+        await detailAnswered;
+        await expect(view.page.getByTestId('portal-event-detail-rain-plan'), 'escala recusada').toHaveCount(0);
+      } finally {
+        await view.context.close();
+      }
+    } finally {
+      await portal.api.dispose();
     }
   });
 });
