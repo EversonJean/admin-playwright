@@ -61,14 +61,17 @@ test.describe('Fluxo 1.1 — Signup pela UI', () => {
     await page.getByTestId('signup-password').fill(fake.adminPassword);
     await page.getByTestId('signup-confirm-password').fill('Outra@Senha123');
     await page.getByTestId('signup-terms').locator('input[type="checkbox"]').check({ force: true });
-    await page.getByTestId('signup-submit').click();
 
     // Validacao client-side bloqueia o POST quando senhas divergem; afirmamos
-    // ausencia de chamada (300ms eh suficiente p/ Angular processar o (click)).
+    // ausencia de chamada. O listener entra ANTES do clique: registrado depois,
+    // um POST disparado no proprio (click) escapava e o teste passava verde.
+    // A janela de 300ms e a de uma asserção negativa (o erro "Senhas não
+    // coincidem" é do formulário, não do controle, e não dá sinal visível estável).
     let signupCalled = false;
     page.on('request', (req) => {
       if (req.url().includes('/api/auth/signup') && req.method() === 'POST') signupCalled = true;
     });
+    await page.getByTestId('signup-submit').click();
     await page.waitForTimeout(300);
     expect(signupCalled, 'submit nao deveria disparar POST signup').toBe(false);
     expect(page.url()).toMatch(/\/auth\/signup$/);
@@ -123,9 +126,11 @@ tenantTest.describe('Fluxo 1.1 — Login pós-signup', () => {
     await page.getByTestId('login-email').fill(tenant.email);
     await page.getByTestId('login-password').fill('Senha@Errada123');
 
+    // Sem timeout próprio: vale o do teste (60 s). O de 10 s estourou no e2e
+    // pós-merge de 2026-10-13 com a suíte em paralelo: o POST saiu e o back
+    // respondeu 401 em 14,6 s (o login certo do fixture, segundos antes, em 0,5 s).
     const loginRespPromise = page.waitForResponse(
       (r) => r.url().includes('/api/auth/login') && r.request().method() === 'POST',
-      { timeout: 10_000 },
     );
     await page.getByTestId('login-submit').click();
     const loginResp = await loginRespPromise;
@@ -164,8 +169,12 @@ authTest.describe('Fluxo 1.1 — Recuperação de senha', () => {
     // 1. Submete forgot pela UI (validação visual + back call)
     await authPage.goto('/auth/forgot-password');
     await authPage.getByTestId('forgot-email').fill(tenant.email);
+    // Espera a resposta do POST da tela, nunca um tempo fixo (era 1 s).
+    const forgotUiResponse = authPage.waitForResponse(
+      (r) => r.url().includes('/api/auth/forgot-password') && r.request().method() === 'POST',
+    );
     await authPage.getByTestId('forgot-submit').click();
-    await authPage.waitForTimeout(1000);
+    expect((await forgotUiResponse).ok()).toBe(true);
 
     // 2. Pega o resetToken via API direto (em dev, response devolve)
     const forgotRes = await api.post('/api/auth/forgot-password', { data: { email: tenant.email } });

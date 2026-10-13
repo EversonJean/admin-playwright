@@ -15,14 +15,11 @@ import {
   apiConfirmCollaborator,
   apiCreatePublicEvent,
   apiGetEvent,
+  apiIssueEventFormLink,
   apiStartEvent,
 } from '../../helpers/api-event-flow';
 import { createBearerApiContext, signupNewTenant } from '../../helpers/api-client';
-import {
-  enableFeatureFlagDirect,
-  getEventFormPublicTokenDirect,
-  setSubscriptionPlanDirect,
-} from '../../helpers/db-helper';
+import { enableFeatureFlagDirect, setSubscriptionPlanDirect } from '../../helpers/db-helper';
 import { fakeOpenAi } from '../../helpers/fake-providers';
 import {
   RainActivity,
@@ -127,7 +124,8 @@ test.describe('Fluxo 6.8 — Plano B de chuva', () => {
   }) => {
     await apiCompleteOnboarding(authApi);
     const party = await setupRainParty(authApi, { venue: 'None' });
-    const token = getEventFormPublicTokenDirect(party.eventId);
+    // Etapa 233: o banco guarda só o hash; o token cru sai da URL emitida pelo back.
+    const { token } = await apiIssueEventFormLink(authApi, party.eventId);
 
     const publicContext = await browser.newContext({
       baseURL: process.env.FRONT_URL ?? 'http://localhost:4200',

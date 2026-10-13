@@ -15,7 +15,7 @@ import { apiErrorCodes, assertOk, readJson } from '../../helpers/response';
 import { openSessionPage, portalDeclineEvent, setupAcceptedEvent, setupPortalUser } from '../../helpers/setup-flows';
 
 /**
- * Fluxo: 13.5 — Colaborador desligado, escala recusada e fronteira do portal
+ * Fluxo: 13.6 — Colaborador desligado, escala recusada e fronteira do portal
  * Diagrama: docs/fluxos/negocio-13-portal-do-colaborador.mmd
  * (cenários E92 a E95 do registro e2e de `docs/implementados/PLANO-SEGURANCA.md`)
  *
@@ -83,7 +83,7 @@ function isoDay(offsetDays: number): string {
   return new Date(Date.now() + offsetDays * 86_400_000).toISOString().slice(0, 10);
 }
 
-test.describe('Fluxo 13.5 — Colaborador desligado e escala recusada', () => {
+test.describe('Fluxo 13.6 — Colaborador desligado e escala recusada', () => {
   test('E92 @flow gestor inativa o colaborador: o portal dá 403 Portal.NotLinked, a renovação dá 401 e a tela sai do portal; reativado, entra de novo', async ({
     authApi,
     tenant,
