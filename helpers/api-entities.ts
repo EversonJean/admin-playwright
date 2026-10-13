@@ -74,19 +74,37 @@ export interface ActivityProductInput {
   isChecklistOnly: boolean;
 }
 
+/** Adequação a local fechado (Etapa 222, `ActivityIndoorSuitability`). */
+export type ActivityIndoorSuitability = 'NotInformed' | 'Indoor' | 'IndoorAdapted' | 'OutdoorOnly';
+
+/** Os dados de "Dias de chuva" da atividade (Etapa 222, PLANO-PLANO-B-DE-CHUVA §2.1). */
+export interface ActivityRainInput {
+  indoorSuitability?: ActivityIndoorSuitability;
+  minSquareMetersPerChild?: number | null;
+  /** Substitutas para chuva, na ordem; o back exige a lista (vazia = nenhuma). */
+  rainSubstituteActivityIds?: string[];
+  category?: string;
+  status?: 'Draft' | 'Active' | 'Inactive';
+}
+
 /**
  * POST /api/activities. `activityProducts` vincula insumos: com
  * `feature_stock`, o aceite do orçamento reserva os consumíveis para o evento.
+ *
+ * Etapa 222 — `rainSubstituteActivityIds` é obrigatório no POST (pode ir vazio,
+ * como `activityProducts`); sem ele o validator recusa com 400.
  */
 export async function apiCreateActivity(
   api: APIRequestContext,
-  overrides: Partial<ReturnType<typeof fakeActivity>> & { activityProducts?: ActivityProductInput[] } = {},
-): Promise<CreatedEntity> {
+  overrides: Partial<ReturnType<typeof fakeActivity>> & {
+    activityProducts?: ActivityProductInput[];
+  } & ActivityRainInput = {},
+): Promise<CreatedEntity & { name: string }> {
   const fake = { ...fakeActivity(), ...overrides };
   const res = await api.post('/api/activities', {
     data: {
       name: fake.name,
-      category: 'Recreação',
+      category: overrides.category ?? 'Recreação',
       description: fake.description,
       durationMinutes: fake.durationMinutes,
       pricePerChild: fake.pricePerChild,
@@ -94,8 +112,12 @@ export async function apiCreateActivity(
       maxChildren: fake.maxChildren,
       minAge: fake.minAgeYears,
       maxAge: fake.maxAgeYears,
+      ...(overrides.status ? { status: overrides.status } : {}),
       // DTO atual exige a lista (vazia = atividade sem insumos vinculados).
       activityProducts: overrides.activityProducts ?? [],
+      indoorSuitability: overrides.indoorSuitability ?? 'NotInformed',
+      minSquareMetersPerChild: overrides.minSquareMetersPerChild ?? null,
+      rainSubstituteActivityIds: overrides.rainSubstituteActivityIds ?? [],
     },
   });
   await expectOk(res, 'apiCreateActivity');
