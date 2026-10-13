@@ -8,7 +8,6 @@ import {
   apiCreatePackage,
 } from '../../helpers/api-entities';
 import {
-  createApiContext,
   createBearerApiContext,
   loginViaApi,
   openPageWithTokens,
@@ -49,7 +48,7 @@ import {
 } from '../../helpers/external-calendar';
 import { apiErrorCodes } from '../../helpers/response';
 import { snack } from '../../helpers/ui';
-import { SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD } from '../../fixtures/super-admin.fixture';
+import { getSuperAdminTokens } from '../../helpers/super-admin-session';
 
 /**
  * Fluxo: 8.5 — Agenda externa: personalização (cores, lembretes, o que espelhar, título e descrição)
@@ -165,15 +164,14 @@ async function missingLinksAlertCount(superApi: APIRequestContext): Promise<numb
   return Number(match[1]);
 }
 
-/** O SuperAdmin semeado no E2E (o mesmo do `superAdminTest`). */
+/**
+ * O SuperAdmin semeado no E2E (o mesmo do `superAdminTest`). Etapa 235: a
+ * sessão sai do helper compartilhado, que resolve o desafio MFA e não repete o
+ * código TOTP de outro worker.
+ */
 async function openSuperAdminApi(): Promise<APIRequestContext> {
-  const anonymous = await createApiContext();
-  try {
-    const tokens = await loginViaApi(anonymous, SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD);
-    return await createBearerApiContext(tokens.accessToken);
-  } finally {
-    await anonymous.dispose();
-  }
+  const tokens = await getSuperAdminTokens();
+  return await createBearerApiContext(tokens.accessToken);
 }
 
 test.describe('Fluxo 8.5 — Agenda externa: personalização', () => {

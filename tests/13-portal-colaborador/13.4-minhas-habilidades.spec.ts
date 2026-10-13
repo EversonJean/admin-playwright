@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
+import { addSessionToContext } from '../../helpers/api-client';
 import { apiCreateSkill } from '../../helpers/api-entities';
 import { setupPortalUser } from '../../helpers/setup-flows';
 import { assertOk, readJson } from '../../helpers/response';
@@ -31,13 +32,8 @@ async function usePortalTokens(
   page: Page,
   tokens: { accessToken: string; refreshToken: string },
 ): Promise<void> {
-  await page.addInitScript(
-    ({ access, refresh }) => {
-      localStorage.setItem('access_token', access);
-      if (refresh) localStorage.setItem('refresh_token', refresh);
-    },
-    { access: tokens.accessToken, refresh: tokens.refreshToken ?? null },
-  );
+  // Etapa 232 — sessão pelo cookie de refresh (o front não lê token de storage).
+  await addSessionToContext(page.context(), tokens.refreshToken);
 }
 
 const SKILLS_REMINDER_KEYS = [

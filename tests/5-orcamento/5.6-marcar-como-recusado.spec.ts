@@ -1,7 +1,7 @@
 import { request as playwrightRequest } from '@playwright/test';
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { twoTenantsTest } from '../../fixtures/two-tenants.fixture';
-import { loginViaApi } from '../../helpers/api-client';
+import { addSessionToContext, loginViaApi } from '../../helpers/api-client';
 import {
   apiCompleteOnboarding,
   apiCreateActivity,
@@ -81,13 +81,9 @@ test.describe('Fluxo 5.6 — refuse budget: permission', () => {
     expect(unchanged.status).toBe('Sent');
 
     // UI do Financeiro: o detalhe abre, sem a ação.
-    await authPage.addInitScript(
-      ({ access, refresh }) => {
-        localStorage.setItem('access_token', access);
-        localStorage.setItem('refresh_token', refresh);
-      },
-      { access: tokens.accessToken, refresh: tokens.refreshToken },
-    );
+    // Troca o cookie de refresh do contexto (mesmo nome e path: sobrescreve o
+    // do admin); o boot da próxima carga renova como o Financeiro.
+    await addSessionToContext(authPage.context(), tokens.refreshToken);
     await authPage.goto(`/app/budgets/${budget.id}`);
     await expect(authPage.getByTestId('budget-form-title')).toHaveText(/Editar orçamento/, {
       timeout: 15_000,

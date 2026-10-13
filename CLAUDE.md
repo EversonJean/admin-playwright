@@ -62,6 +62,13 @@ do boot aplica as migrations do working tree NESSA base. A porta 1502 e a base
 `AuthPermitLimit` 5 e nao aguenta a suite). O `BACK_CONNECTION_STRING` do
 `playwright.config.ts` tambem nao tem efeito, pelo mesmo motivo.
 
+[ALERTA] **Configuracao do back para o e2e vai no `appsettings.E2E.json`, nunca
+no `env` do webServer.** Com `reuseExistingServer`, o back que ja estava de pe e
+reaproveitado e nunca recebe as variaveis do `env`: o spec passa quando o
+Playwright sobe o back e falha quando reaproveita. Valor que o fake precisa
+conferir (ex.: `WhatsApp:AppId`/`AppSecret`, PLANO-SEGURANCA E143/E147) e
+default literal no fake, igual ao do `appsettings.E2E.json`.
+
 [NOTA] O `webServer` tem timeout de 180s e o back sobe com `dotnet run`, que
 **compila**. Em build frio isso estoura e o erro e so
 `Timed out waiting 180000ms from config.webServer`, sem dizer qual servidor.
@@ -74,6 +81,7 @@ Rode `dotnet build` no `admin-backend` antes da primeira execucao do dia.
 - Cada teste cria o próprio tenant (fixture); o banco fica sujo e isso é aceito: o filtro multi-tenant do back isola.
 - Integração externa sempre via fake; asserção no inbox do fake (`/_control/inbox`), webhook disparado via `/_control/trigger-webhook`.
 - Spec nasce **no fim de um plano**, não por etapa: as etapas anotam os cenários no registro e2e do plano (`docs/CLAUDE.md` da raiz, "Registro e2e do plano") e o `/e2e-plano` escreve e roda todos de uma vez. O spec afirma o que o plano pede; falha em que o código diverge do plano não se conserta afrouxando a asserção. O diagrama `docs/fluxos/negocio-N.M-*.mmd` tem o mesmo número do spec.
+- [ALERTA] `helpers/backend-cipher.ts` repete a cifra do `AesEncryptionService` do back (HKDF com info `recreativo:data-protection:v2:k1`, formato `v2:k1:`, AAD `{Entidade}|{tenant}|{id}` em minúsculas; Etapa 242, para semear o canal do WhatsApp com token cifrado). Mudança de chave, de `KeyId` ou de nome de entidade no back exige mudar o helper junto; a quebra aparece como 409 `WhatsAppOutbound.ChannelNotConfigured` no envio.
 
 ## Veja também
 

@@ -151,6 +151,35 @@ export async function apiCreateCollaborator(
 }
 
 /**
+ * PUT /api/collaborators/{id} com o mesmo cadastro e só o status trocado (o PUT
+ * é estado completo). Mesma forma do helper local do `13.5`.
+ */
+export async function apiSetCollaboratorStatus(
+  api: APIRequestContext,
+  id: string,
+  status: 'Active' | 'Inactive',
+): Promise<void> {
+  const get = await api.get(`/api/collaborators/${id}`);
+  await expectOk(get, 'GET /api/collaborators/{id}');
+  const raw = await get.json();
+  const c = (raw.data ?? raw) as Record<string, unknown>;
+  const res = await api.put(`/api/collaborators/${id}`, {
+    data: {
+      name: c.name,
+      role: c.role,
+      email: c.email,
+      phone: c.phone,
+      defaultPaymentPerEvent: c.defaultPaymentPerEvent,
+      address: c.address,
+      notes: c.notes,
+      status,
+      levelId: c.levelId ?? null,
+    },
+  });
+  await expectOk(res, `apiSetCollaboratorStatus(${status})`);
+}
+
+/**
  * POST /api/packages — pacote ATIVO com as atividades dadas (estratégia
  * `Calculated` sem desconto, 1 a 50 crianças), para o orçamento referenciar pelo `packageId`.
  * Nome único por `Date.now()`.
@@ -261,7 +290,12 @@ export async function apiAddCollaboratorSkill(
  */
 export async function apiCreateContactIdentity(
   api: APIRequestContext,
-  input: { displayName?: string; whatsappPhones: string[] },
+  input: {
+    displayName?: string;
+    whatsappPhones: string[];
+    /** Consentimento de todos os pontos (`ContactConsentStatus`); omitido = o default do back. */
+    consentStatus?: 'Unknown' | 'OptIn' | 'OptOut';
+  },
 ): Promise<CreatedEntity & { displayName: string }> {
   const res = await api.post('/api/contact-identities', {
     data: {
@@ -275,7 +309,7 @@ export async function apiCreateContactIdentity(
         type: 'Whatsapp',
         value,
         isPrimary: i === 0,
-        consentStatus: null,
+        consentStatus: input.consentStatus ?? null,
         isVerified: null,
       })),
     },

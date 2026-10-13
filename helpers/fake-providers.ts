@@ -280,6 +280,20 @@ export const fakeWhatsApp = {
     }
   },
   /**
+   * Cadastra os numeros que `GET /:wabaId/phone_numbers` lista (Etapa 239): o
+   * connect do Embedded Signup so aceita `phoneNumberId` que a WABA tenha.
+   */
+  seedWabaPhoneNumbers: async (wabaId: string, phoneNumberIds: string[]) => {
+    const api = await ctx();
+    try {
+      await api.put(`${URLS.whatsapp}/_control/wabas/${encodeURIComponent(wabaId)}/phone-numbers`, {
+        data: { ids: phoneNumberIds },
+      });
+    } finally {
+      await api.dispose();
+    }
+  },
+  /**
    * Pre-cadastra um template no fake com status especifico — usado pra
    * cobrir cenarios de Rejected/Paused (GET /:id devolve esse status em
    * vez de auto-criar como Approved).
@@ -319,6 +333,30 @@ export const fakeWhatsApp = {
      */
     phoneNumberId?: string;
   }) => triggerWebhook('whatsapp', body),
+  /**
+   * Webhook com o corpo inteiro montado pelo spec, assinado pelo fake com o
+   * `WebhookAppSecret` (`kind: 'raw'`): o lote com `entry` de números de
+   * tenants diferentes (SEG-C item 7a) e o `message_template_status_update`
+   * da WABA (SEG-C2), que o `triggerWebhook` não monta.
+   */
+  triggerRawWebhook: (payload: Record<string, unknown>) =>
+    triggerWebhook('whatsapp', { kind: 'raw', phone: '', payload }),
+  /**
+   * Cadastra a mídia RECEBIDA que o back baixa pelo `id` citado no webhook
+   * (`GET /:mediaId` + download da url, com o token do canal): o anexo arquivado
+   * de um canal com `StoreMediaFiles` (e2e da Etapa 241, PLANO-SEGURANCA E168).
+   */
+  seedInboundMedia: async (input: { id: string; mimeType: string; bytes: Buffer }): Promise<void> => {
+    const api = await ctx();
+    try {
+      const res = await api.post(`${URLS.whatsapp}/_control/media`, {
+        data: { id: input.id, mimeType: input.mimeType, contentBase64: input.bytes.toString('base64') },
+      });
+      if (!res.ok()) throw new Error(`fake whatsapp media: ${res.status()}`);
+    } finally {
+      await api.dispose();
+    }
+  },
 };
 
 // ─── ClickSign ──────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@ import { tenantTest } from '../../fixtures/tenant.fixture';
 import { authTest } from '../../fixtures/auth.fixture';
 import { fakeTenant } from '../../helpers/test-data';
 import { confirmEmailDirect } from '../../helpers/db-helper';
-import { createApiContext } from '../../helpers/api-client';
+import { CSRF_HEADER, createApiContext, refreshCookieHeader } from '../../helpers/api-client';
 
 /**
  * Fluxo: 1.1 — Criar conta da empresa (ciclo de vida do usuário completo)
@@ -144,16 +144,18 @@ authTest.describe('Fluxo 1.1 — Logout', () => {
   });
 
   authTest('@flow logout via API invalida o refresh token', async ({ authApi, tenant }) => {
+    // Etapa 232 — logout e refresh se identificam só pelo cookie
+    // `recreativo_refresh`; o `authApi` não o tem no jar, então vai no header.
     const logoutRes = await authApi.post('/api/auth/logout', {
-      data: { refreshToken: tenant.refreshToken },
+      headers: refreshCookieHeader(tenant.refreshToken),
     });
     expect(logoutRes.ok()).toBe(true);
 
     // Refresh com o mesmo token agora falha (token foi revogado)
     const refreshRes = await authApi.post('/api/auth/refresh', {
-      data: { refreshToken: tenant.refreshToken },
+      headers: { ...refreshCookieHeader(tenant.refreshToken), ...CSRF_HEADER },
     });
-    expect(refreshRes.status()).toBeGreaterThanOrEqual(400);
+    expect(refreshRes.status()).toBe(401);
   });
 });
 

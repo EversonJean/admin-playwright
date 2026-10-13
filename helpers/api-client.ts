@@ -1,16 +1,72 @@
-import { APIRequestContext, Browser, Page, request } from '@playwright/test';
+import { APIRequestContext, APIResponse, Browser, BrowserContext, Page, request } from '@playwright/test';
 import { confirmEmailDirect } from './db-helper';
 import { fakeTenant } from './test-data';
 
 const BACK_URL = process.env.BACK_URL ?? 'https://localhost:1501';
+const FRONT_URL = process.env.FRONT_URL ?? 'http://localhost:4200';
+
+/**
+ * Etapa 232 (SEG-K) — o refresh token não vem mais no JSON do login: vive só no
+ * cookie HttpOnly `recreativo_refresh` (`Path=/api/auth`, `SameSite=Strict`,
+ * `Secure`). O `/api/auth/refresh` lê esse cookie e exige o header `X-CSRF`.
+ */
+export const REFRESH_COOKIE = 'recreativo_refresh';
+export const CSRF_HEADER = { 'X-CSRF': '1' } as const;
+
+/**
+ * Dica de sessão que o `TokenStorage` do front lê no boot para restaurar a
+ * sessão pelo cookie (`'1'`, nunca um token). Sem ela o boot não chama o
+ * `/auth/refresh` e a página sobe deslogada.
+ */
+const SESSION_HINT_KEY = 'auth_session';
 
 export interface SignupResult {
   email: string;
   password: string;
   accessToken: string;
+  /** Valor do cookie `recreativo_refresh` emitido no login (não vem mais no JSON). */
   refreshToken: string;
   userId: string;
   tenantId: string;
+}
+
+/** Valor do cookie de refresh no `Set-Cookie` de uma resposta de login/refresh. */
+export function readRefreshCookie(res: APIResponse): string {
+  const prefix = `${REFRESH_COOKIE}=`;
+  const header = res
+    .headersArray()
+    .find((h) => h.name.toLowerCase() === 'set-cookie' && h.value.startsWith(prefix));
+  const value = header?.value.slice(prefix.length).split(';')[0] ?? '';
+  if (value === '') {
+    throw new Error(`Resposta de ${res.url()} sem o cookie ${REFRESH_COOKIE}`);
+  }
+  return value;
+}
+
+/** Header `Cookie` para mandar o refresh por um `APIRequestContext` que não tem o cookie no jar. */
+export function refreshCookieHeader(refreshToken: string): Record<string, string> {
+  return { Cookie: `${REFRESH_COOKIE}=${refreshToken}` };
+}
+
+/**
+ * Sessão num contexto de navegador: o cookie de refresh (mesmos atributos que
+ * o back grava, para o `Set-Cookie` da rotação sobrescrever este e não criar um
+ * segundo) e a dica de sessão antes de qualquer script da página. O boot do
+ * front chama `/api/auth/refresh` e obtém o access token.
+ */
+export async function addSessionToContext(context: BrowserContext, refreshToken: string): Promise<void> {
+  await context.addCookies([
+    {
+      name: REFRESH_COOKIE,
+      value: refreshToken,
+      domain: new URL(FRONT_URL).hostname,
+      path: '/api/auth',
+      httpOnly: true,
+      secure: true,
+      sameSite: 'Strict',
+    },
+  ]);
+  await context.addInitScript((key) => localStorage.setItem(key, '1'), SESSION_HINT_KEY);
 }
 
 /**
@@ -72,7 +128,7 @@ export async function signupAndConfirm(
     email: input.adminEmail,
     password: input.adminPassword,
     accessToken: payload.accessToken ?? payload.token,
-    refreshToken: payload.refreshToken,
+    refreshToken: readRefreshCookie(loginRes),
     userId: payload.userId ?? payload.user?.id,
     tenantId: payload.tenantId ?? payload.user?.tenantId,
   };
@@ -95,7 +151,7 @@ export async function loginViaApi(
   const payload = body.data ?? body;
   return {
     accessToken: payload.accessToken ?? payload.token,
-    refreshToken: payload.refreshToken,
+    refreshToken: readRefreshCookie(res),
   };
 }
 
@@ -103,9 +159,22 @@ export async function loginViaApi(
  * POST /api/auth/step-up — confirmação de senha antes de ação sensível
  * (Etapa 86). Devolve o token que vai no header `X-Step-Up-Token` da ação.
  * Usuário sem MFA (o admin do signup, os seedados) confirma só com a senha.
+ *
+ * Etapa 235 (SEG-B): `action` é obrigatória e o token só vale para ela (a
+ * string do `[RequiresStepUp]` do endpoint: `external_calendar.connect`,
+ * `tenant.impersonate`, ...). O Super Admin manda também o TOTP, reservado por
+ * `reserveSuperAdminTotpCode()` (`helpers/super-admin-session.ts`) para não
+ * repetir o período do login.
  */
-export async function apiStepUp(api: APIRequestContext, password: string): Promise<string> {
-  const res = await api.post('/api/auth/step-up', { data: { password, mfaCode: null, backupCode: null } });
+export async function apiStepUp(
+  api: APIRequestContext,
+  password: string,
+  action: string,
+  mfaCode: string | null = null,
+): Promise<string> {
+  const res = await api.post('/api/auth/step-up', {
+    data: { password, action, mfaCode, backupCode: null },
+  });
   if (!res.ok()) {
     throw new Error(`Step-up falhou (${res.status()}): ${await res.text()}`);
   }
@@ -127,22 +196,30 @@ export async function createBearerApiContext(accessToken: string): Promise<APIRe
 }
 
 /**
+ * APIRequestContext com o Bearer e SEM `Content-Type` fixo, para upload
+ * `multipart`: o Playwright não sobrescreve um `Content-Type` que já vem dos
+ * `extraHTTPHeaders`, e o `application/json` dos outros contextos chegaria ao
+ * back no lugar do `multipart/form-data; boundary=…`. Quem chama dá `dispose`.
+ */
+export async function createBearerMultipartContext(accessToken: string): Promise<APIRequestContext> {
+  return await request.newContext({
+    baseURL: BACK_URL,
+    ignoreHTTPSErrors: true,
+    extraHTTPHeaders: { Authorization: `Bearer ${accessToken}` },
+  });
+}
+
+/**
  * Página autenticada como outro usuário, do mesmo jeito do `authPage` da
- * fixture (tokens no localStorage antes do boot). Quem chama fecha o contexto
- * (`page.context().close()`).
+ * fixture (cookie de refresh + dica de sessão antes do boot). Quem chama fecha
+ * o contexto (`page.context().close()`).
  */
 export async function openPageWithTokens(
   browser: Browser,
-  tokens: { accessToken: string; refreshToken?: string | null },
+  tokens: { refreshToken: string },
 ): Promise<Page> {
   const context = await browser.newContext({ ignoreHTTPSErrors: true, locale: 'pt-BR', timezoneId: 'America/Sao_Paulo' });
-  await context.addInitScript(
-    ({ access, refresh }) => {
-      localStorage.setItem('access_token', access);
-      if (refresh) localStorage.setItem('refresh_token', refresh);
-    },
-    { access: tokens.accessToken, refresh: tokens.refreshToken ?? null },
-  );
+  await addSessionToContext(context, tokens.refreshToken);
   return context.newPage();
 }
 

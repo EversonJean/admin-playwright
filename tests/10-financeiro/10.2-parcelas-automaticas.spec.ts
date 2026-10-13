@@ -1,7 +1,7 @@
 import { APIRequestContext, request as playwrightRequest } from '@playwright/test';
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
-import { loginViaApi } from '../../helpers/api-client';
+import { addSessionToContext, loginViaApi } from '../../helpers/api-client';
 import {
   apiCompleteOnboarding,
   apiCreateActivity,
@@ -224,13 +224,9 @@ test.describe('Fluxo 10.2 — Parcelas automáticas', () => {
     }
     expect((await apiGetTemplate(authApi, template.id)).status).toBe('Active');
 
-    await authPage.addInitScript(
-      ({ access, refresh }) => {
-        localStorage.setItem('access_token', access);
-        localStorage.setItem('refresh_token', refresh);
-      },
-      { access: tokens.accessToken, refresh: tokens.refreshToken },
-    );
+    // Troca o cookie de refresh do contexto (mesmo nome e path: sobrescreve o
+    // do admin); o boot da próxima carga renova como o Gerente.
+    await addSessionToContext(authPage.context(), tokens.refreshToken);
     await authPage.goto('/app/settings/payment-terms');
     await expect(authPage.getByTestId(`payment-terms-status-${template.id}`)).toHaveText('Ativo', {
       timeout: 15_000,

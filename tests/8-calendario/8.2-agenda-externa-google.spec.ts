@@ -8,6 +8,7 @@ import {
   apiConnectGoogleCalendar,
   apiGetExternalCalendarStatus,
   apiGetGoogleConnection,
+  EXTERNAL_CALENDAR_STEP_UP_ACTION,
   STEP_UP_HEADER,
   waitForGoogleEvent,
   waitForGoogleSyncIdle,
@@ -302,7 +303,7 @@ test.describe('Fluxo 8.2 — Agenda externa: Google', () => {
       expect(intent.status()).toBe(403);
 
       // ...e no connect, mesmo com o step-up dele em mãos (a recusa é da permission, não do step-up).
-      const managerStepUp = await apiStepUp(managerApi, manager.password);
+      const managerStepUp = await apiStepUp(managerApi, manager.password, EXTERNAL_CALENDAR_STEP_UP_ACTION);
       const code = await fakeGoogleCalendar.authorize();
       const connect = await managerApi.post('/api/calendar/google/connect', {
         data: { code: code.code, nonce: 'nonce-qualquer' },

@@ -1,4 +1,7 @@
 import { execFileSync } from 'child_process';
+import { randomUUID } from 'crypto';
+
+import { encryptForBackend, rowAssociatedData } from './backend-cipher';
 
 /**
  * Helper de DB via `psql.exe` local. Usado para operações que não têm endpoint
@@ -105,12 +108,21 @@ export function seedApprovedWhatsAppTemplateDirect(input: {
   body: string;
   category?: 'Utility' | 'Authentication' | 'Marketing';
   language?: string;
+  /**
+   * Chaves das variáveis, na ordem dos placeholders `{{1}}`, `{{2}}`… do
+   * corpo (`WhatsAppTemplateVariables`). Omitida = template sem variável.
+   */
+  variables?: string[];
 }): string {
   const id = execSql(`SELECT gen_random_uuid()::text;`);
   const safeName = input.name.replace(/'/g, "''");
   const safeBody = input.body.replace(/'/g, "''");
   const safeCat = (input.category ?? 'Utility').replace(/'/g, "''");
   const safeLang = (input.language ?? 'pt_BR').replace(/'/g, "''");
+  const variableRows = (input.variables ?? []).map((key, i) => {
+    const safeKey = key.replace(/'/g, "''");
+    return `(gen_random_uuid(), '${id}', ${i + 1}, '${safeKey}', '${safeKey}', '${safeKey} E2E', now(), now(), false)`;
+  });
   execSql(`
     INSERT INTO "WhatsAppTemplates"
       ("Id", "Name", "Language", "Category", "Status", "Body",
@@ -118,6 +130,95 @@ export function seedApprovedWhatsAppTemplateDirect(input: {
     VALUES
       ('${id}', '${safeName}', '${safeLang}', '${safeCat}', 'Approved',
        '${safeBody}', 'meta_tmpl_${id}', now(), now(), false);
+    ${
+      variableRows.length > 0
+        ? `INSERT INTO "WhatsAppTemplateVariables"
+             ("Id", "WhatsAppTemplateId", "Placeholder", "Key", "Description", "Example",
+              "CreatedAt", "UpdatedAt", "IsDeleted")
+           VALUES ${variableRows.join(', ')};`
+        : ''
+    }
+  `);
+  return id;
+}
+
+/** Id do template do catálogo pelo nome (`orcamento_pronto` é semeado pelo back em E2E). */
+export function whatsAppTemplateIdByNameDirect(name: string): string {
+  const safeName = name.replace(/'/g, "''");
+  const id = execSql(
+    `SELECT "Id"::text FROM "WhatsAppTemplates" WHERE "Name" = '${safeName}' AND "IsDeleted" = false ORDER BY "CreatedAt" LIMIT 1;`,
+  );
+  if (!id) throw new Error(`template ${name} não está no catálogo — o back E2E semeia o orcamento_pronto no boot`);
+  return id;
+}
+
+/**
+ * A Meta atribuiu o id ao template da conta da plataforma: sem `MetaTemplateId`
+ * o `sync-approval` devolve `Pending` sem consultar (o fake aprova quem ele
+ * conhece). Pré-condição de quem testa a aprovação do catálogo (Etapa 242).
+ */
+export function setWhatsAppTemplateMetaIdDirect(templateId: string, metaTemplateId: string): void {
+  const safeId = templateId.replace(/'/g, "''");
+  const safeMeta = metaTemplateId.replace(/'/g, "''");
+  execSql(`UPDATE "WhatsAppTemplates" SET "MetaTemplateId" = '${safeMeta}' WHERE "Id" = '${safeId}';`);
+}
+
+/**
+ * `count` envios de template (`OutboundDispatch` manual, `Sent`) criados agora
+ * no tenant, para encher a cota diária sem passar pelo rate limit de 30/min do
+ * envio (Etapa 239: a cota conta os dispatches não `Failed` desde a
+ * meia-noite do tenant). A conversa e o template são do próprio teste.
+ */
+export function seedOutboundDispatchesDirect(input: {
+  tenantId: string;
+  conversationId: string;
+  templateId: string;
+  toPhone: string;
+  count: number;
+}): void {
+  const safeTenant = input.tenantId.replace(/'/g, "''");
+  const safeConversation = input.conversationId.replace(/'/g, "''");
+  const safeTemplate = input.templateId.replace(/'/g, "''");
+  const safePhone = input.toPhone.replace(/'/g, "''");
+  execSql(`
+    INSERT INTO "OutboundDispatches"
+      ("Id", "TenantId", "ConversationId", "WhatsAppTemplateId", "TemplateNameSnapshot",
+       "ToPhone", "Source", "Status", "RenderedBody", "SentAt", "Attempts", "MaxAttempts",
+       "CreatedAt", "UpdatedAt", "IsDeleted")
+    SELECT gen_random_uuid(), '${safeTenant}', '${safeConversation}', '${safeTemplate}', 'cota_e2e',
+       '${safePhone}', 'Manual', 'Sent', 'Envio semeado (cota E2E)', now(), 1, 3,
+       now(), now(), false
+      FROM generate_series(1, ${Math.trunc(input.count)});
+  `);
+}
+
+/**
+ * Campanha "Festa de novo" `Suggested` (Etapa 121) direto no banco: o worker
+ * diário que a gera precisa de festa passada com formulário e consentimento, e
+ * roda a cada 24 h. Sem FK na tabela; `SourceEventId` é só referência.
+ */
+export function seedBirthdayCampaignDirect(input: {
+  tenantId: string;
+  clientId: string;
+  honoreeFirstName: string;
+  messageText: string;
+}): string {
+  const id = randomUUID();
+  const safeTenant = input.tenantId.replace(/'/g, "''");
+  const safeClient = input.clientId.replace(/'/g, "''");
+  const safeName = input.honoreeFirstName.replace(/'/g, "''");
+  const safeText = input.messageText.replace(/'/g, "''");
+  execSql(`
+    INSERT INTO "BirthdayCampaigns"
+      ("Id", "TenantId", "ClientId", "SourceEventId", "HonoreeFirstName", "HonoreeBirthDate",
+       "AgeTurning", "BirthdayYear", "BirthdayDate", "Status", "MessageText", "RenderedPreview",
+       "GeneratedAt", "CreatedAt", "UpdatedAt", "IsDeleted")
+    VALUES
+      ('${id}', '${safeTenant}', '${safeClient}', gen_random_uuid(), '${safeName}',
+       (current_date + 70 - interval '6 years')::date,
+       6, extract(year from current_date + 70)::int, (current_date + 70)::date, 1,
+       '${safeText}', '${safeText}',
+       now(), now(), now(), false);
   `);
   return id;
 }
@@ -143,29 +244,138 @@ export function seedApprovedWhatsAppTemplateDirect(input: {
  * Os canais ativos com o mesmo id ainda sao desligados antes (o banco E2E e
  * sujo por design); com o id por tenant isso so alcanca o proprio tenant.
  *
+ * [ALERTA] Canal ativo criado ha mais de 1 h (de qualquer tenant) tambem e
+ * desligado antes. A aprovacao de um template no Super Admin faz fan-out para
+ * TODO tenant com canal ativo (E147, PLANO-SEGURANCA): com os canais das
+ * execucoes anteriores vivos, cada aprovacao submetia o modelo a todas as WABAs
+ * acumuladas no banco, e a espera pela do proprio tenant crescia a cada execucao. Nenhum
+ * teste dura 1 h, entao o canal de um teste em curso nunca e alcancado; nenhum
+ * spec depende de canal semeado antes da propria execucao.
+ *
  * Classificacao e auto-lead ficam desligados: o spec quer so a conversa.
+ *
+ * Etapa 242 (SEG-C2): o envio ativo sai pelo canal DO TENANT, com o token dele
+ * decifrado pelo back. O canal nasce com `AccessTokenCipher` (token
+ * `whatsappChannelToken(phoneNumberId)`, cifrado com o AAD da linha por
+ * `helpers/backend-cipher`) e `ConnectedAt`; sem isso todo envio do tenant
+ * volta 409 `WhatsAppOutbound.ChannelNotConfigured`. Template enviado tambem
+ * precisa do vinculo aprovado na WABA: `seedWhatsAppTemplateBindingDirect`.
  */
 export function seedWhatsappChannelDirect(
   tenantId: string,
   phoneNumberId = `fake_phone_${tenantId.replace(/-/g, '')}`,
+  businessAccountId: string = WHATSAPP_E2E_WABA_ID,
 ): string {
+  const channelId = randomUUID();
   const safeTenant = tenantId.replace(/'/g, "''");
   const safePhone = phoneNumberId.replace(/'/g, "''");
+  const safeWaba = businessAccountId.replace(/'/g, "''");
+  const cipher = encryptForBackend(
+    whatsappChannelToken(phoneNumberId),
+    rowAssociatedData('WhatsappChannelConfig', tenantId, channelId),
+  );
   execSql(`
     UPDATE "WhatsappChannelConfigs" SET "IsActive" = false, "UpdatedAt" = now()
-     WHERE "PhoneNumberId" = '${safePhone}' AND "IsActive" = true;
+     WHERE "IsActive" = true
+       AND ("PhoneNumberId" = '${safePhone}' OR "CreatedAt" < now() - interval '1 hour');
     INSERT INTO "WhatsappChannelConfigs"
       ("Id", "TenantId", "PhoneNumberId", "BusinessAccountId", "VerifyTokenHash",
        "IsActive", "MirrorSentMessages", "SaveMedia", "IgnoreGroups",
        "AutoClassify", "UseAiClassifier", "AutoCreateLeadFromWhatsapp",
-       "StoreMediaFiles", "CreatedAt", "UpdatedAt", "IsDeleted")
+       "StoreMediaFiles", "AccessTokenCipher", "ConnectedAt",
+       "CreatedAt", "UpdatedAt", "IsDeleted")
     VALUES
-      (gen_random_uuid(), '${safeTenant}', '${safePhone}', 'fake_waba_id', 'e2e',
+      ('${channelId}', '${safeTenant}', '${safePhone}', '${safeWaba}', 'e2e',
        true, false, false, true,
        false, false, false,
-       false, now(), now(), false);
+       false, '${cipher}', now(),
+       now(), now(), false);
   `);
   return phoneNumberId;
+}
+
+/**
+ * WABA dos canais semeados. A mesma para todos os tenants: o vinculo do template
+ * e por (tenant, template) e o back o compara com a WABA do canal do proprio
+ * tenant, entao um id compartilhado nao cruza tenants no ENVIO.
+ *
+ * [ALERTA] O webhook `message_template_status_update` acha os tenants pela WABA
+ * (`entry.id`) e o vinculo pelo id da Meta, que o seed deriva do template: com a
+ * WABA compartilhada, o status mandado para um tenant muda o vinculo do mesmo
+ * template em todo tenant semeado. Spec que dispara esse webhook passa uma WABA
+ * propria em `seedConnectedWhatsappTenantDirect(..., { businessAccountId })`.
+ */
+export const WHATSAPP_E2E_WABA_ID = 'fake_waba_id';
+
+/**
+ * Token do canal semeado por `seedWhatsappChannelDirect`. Deterministico por
+ * numero para o spec conferir, no inbox do fake, que o envio saiu com o token
+ * DO TENANT e nao com o `WhatsApp:ApiKey` da plataforma (Etapa 242).
+ */
+export function whatsappChannelToken(phoneNumberId: string): string {
+  return `fake_token_${phoneNumberId}`;
+}
+
+/**
+ * Vinculo (tenant, template) APROVADO na WABA do canal semeado (Etapa 242), o
+ * que o back exige para enviar template pelo canal do tenant (senao 409
+ * `WhatsAppOutbound.TemplateNotInWaba`). Em producao ele nasce na conexao (o
+ * back submete os templates aprovados do catalogo a WABA); no E2E o canal e
+ * semeado, entao o vinculo tambem.
+ *
+ * O `MetaTemplateId` e o da WABA do tenant, nao o do catalogo
+ * (`meta_tmpl_<id>` de `seedApprovedWhatsAppTemplateDirect`): `waba_tmpl_<id>`.
+ */
+export function seedWhatsAppTemplateBindingDirect(
+  tenantId: string,
+  templateId: string,
+  businessAccountId = WHATSAPP_E2E_WABA_ID,
+): string {
+  const safeTenant = tenantId.replace(/'/g, "''");
+  const safeTemplate = templateId.replace(/'/g, "''");
+  const safeWaba = businessAccountId.replace(/'/g, "''");
+  const metaTemplateId = `waba_tmpl_${templateId.replace(/-/g, '')}`.slice(0, 64);
+  execSql(`
+    INSERT INTO "WhatsAppTemplateWabaBindings"
+      ("Id", "TenantId", "WhatsAppTemplateId", "BusinessAccountId", "MetaTemplateId",
+       "Status", "RejectionReason", "SubmittedAt", "StatusUpdatedAt",
+       "CreatedAt", "UpdatedAt", "IsDeleted")
+    VALUES
+      (gen_random_uuid(), '${safeTenant}', '${safeTemplate}', '${safeWaba}', '${metaTemplateId}',
+       'Approved', NULL, now(), now(),
+       now(), now(), false);
+  `);
+  return metaTemplateId;
+}
+
+/**
+ * Tenant pronto para enviar WhatsApp pelo proprio canal (Etapa 242): canal
+ * ativo com token e, para cada template, o vinculo aprovado na WABA. Devolve o
+ * `phoneNumberId` (o do webhook) e o token que o fake deve receber.
+ */
+export function seedConnectedWhatsappTenantDirect(
+  tenantId: string,
+  templateIds: string[] = [],
+  opts: { businessAccountId?: string } = {},
+): {
+  phoneNumberId: string;
+  accessToken: string;
+  businessAccountId: string;
+  /** Id da Meta de cada vínculo, por template (o `message_template_id` do webhook de status). */
+  metaTemplateIds: Record<string, string>;
+} {
+  const businessAccountId = opts.businessAccountId ?? WHATSAPP_E2E_WABA_ID;
+  const phoneNumberId = seedWhatsappChannelDirect(tenantId, undefined, businessAccountId);
+  const metaTemplateIds: Record<string, string> = {};
+  for (const templateId of templateIds) {
+    metaTemplateIds[templateId] = seedWhatsAppTemplateBindingDirect(tenantId, templateId, businessAccountId);
+  }
+  return {
+    phoneNumberId,
+    accessToken: whatsappChannelToken(phoneNumberId),
+    businessAccountId,
+    metaTemplateIds,
+  };
 }
 
 /**
@@ -192,14 +402,23 @@ export function seedUserWithRoleDirect(input: {
     INSERT INTO "Users"
       ("Id", "TenantId", "Type", "Email", "PasswordHash", "Name",
        "Role", "Status", "HasPasswordCredential", "FailedLoginAttempts",
-       "CreatedAt", "UpdatedAt", "IsDeleted")
+       "SecurityStamp", "CreatedAt", "UpdatedAt", "IsDeleted")
     VALUES
       (gen_random_uuid(), '${safeTenant}', 'User', '${safeEmail}',
        '${safeHash}', 'Test ${input.role}', '${input.role}', 'Active',
-       true, 0, now(), now(), false);
+       true, 0, ${NEW_SECURITY_STAMP_SQL}, now(), now(), false);
   `);
   return { email, password: 'Dev12345!' };
 }
+
+/**
+ * Carimbo de segurança de usuário semeado por SQL, no formato do
+ * `User.SecurityStamp` (Guid "N"). Desde a Etapa 231 o token sem
+ * `security_stamp` toma 401 em todo request autenticado (falha fechada), e a
+ * coluna nasce vazia por default: sem isto, o usuário semeado loga mas não
+ * passa de nenhuma rota autenticada.
+ */
+const NEW_SECURITY_STAMP_SQL = `replace(gen_random_uuid()::text, '-', '')`;
 
 /**
  * Cria User com role=CollaboratorPortal vinculado a um Collaborator
@@ -227,32 +446,15 @@ export function seedCollaboratorPortalUserDirect(input: {
       ("Id", "TenantId", "Type", "Email", "PasswordHash", "Name",
        "Role", "CollaboratorId", "Status",
        "HasPasswordCredential", "FailedLoginAttempts",
-       "CreatedAt", "UpdatedAt", "IsDeleted")
+       "SecurityStamp", "CreatedAt", "UpdatedAt", "IsDeleted")
     VALUES
       (gen_random_uuid(), '${safeTenant}', 'User', '${safeEmail}',
        '${safeHash}', 'Portal User',
        'CollaboratorPortal', '${safeCollab}', 'Active',
        true, 0,
-       now(), now(), false);
+       ${NEW_SECURITY_STAMP_SQL}, now(), now(), false);
   `);
   return { email, password: 'Dev12345!' };
-}
-
-/**
- * Le o `FormPublicToken` do Event direto do DB. Nao eh exposto no
- * EventDetailDto por padrao (Etapa 55 — token publico nao volta em
- * /api/events/:id); aqui pegamos via SQL pra exercitar o endpoint
- * publico /api/public/events/:token/form em E2E.
- */
-export function getEventFormPublicTokenDirect(eventId: string): string {
-  const safeId = eventId.replace(/'/g, "''");
-  const token = execSql(
-    `SELECT "FormPublicToken" FROM "Events" WHERE "Id" = '${safeId}';`,
-  );
-  if (!token) {
-    throw new Error(`Event ${eventId} sem FormPublicToken (ou nao existe)`);
-  }
-  return token;
 }
 
 /**
@@ -373,6 +575,250 @@ export function setEventAddressDirect(eventId: string, city: string, state: stri
            "Address_Country" = 'BR', "UpdatedAt" = now()
      WHERE "Id" = '${safeId}';
   `);
+}
+
+/**
+ * Super Admin novo SEM MFA (o `superadmin@dev.local` do seed nasce com TOTP
+ * desde a Etapa 235). Sem fluxo de criação de Super Admin pela API, vai por SQL
+ * como o `User.CreateSuperAdmin` do back: `TenantId` vazio, `Type`/`Role`
+ * `SuperAdmin`; senha `Dev12345!` pelo hash reusado do seed.
+ */
+export function seedSuperAdminDirect(emailPrefix = 'superadmin'): { email: string; password: string } {
+  const email = `${emailPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@e2e.test`;
+  const safeEmail = email.replace(/'/g, "''");
+  const hash = execSql(
+    `SELECT "PasswordHash" FROM "Users" WHERE "Email" = 'superadmin@dev.local';`,
+  );
+  if (!hash) {
+    throw new Error('superadmin@dev.local nao seedado — rode npm run db:reset');
+  }
+  const safeHash = hash.replace(/'/g, "''");
+  execSql(`
+    INSERT INTO "Users"
+      ("Id", "TenantId", "Type", "Email", "PasswordHash", "Name",
+       "Role", "Status", "HasPasswordCredential", "FailedLoginAttempts",
+       "SecurityStamp", "CreatedAt", "UpdatedAt", "IsDeleted")
+    VALUES
+      (gen_random_uuid(), '00000000-0000-0000-0000-000000000000', 'SuperAdmin', '${safeEmail}',
+       '${safeHash}', 'E2E SuperAdmin', 'SuperAdmin', 'Active',
+       true, 0, ${NEW_SECURITY_STAMP_SQL}, now(), now(), false);
+  `);
+  return { email, password: 'Dev12345!' };
+}
+
+/**
+ * Envelhece o `CreatedAt` do usuário: a carência do MFA obrigatório (Etapa 235)
+ * conta da criação da conta. Chamar ANTES do primeiro request autenticado do
+ * usuário: o validador de token guarda a data num snapshot em cache.
+ */
+export function backdateUserCreatedAtDirect(userId: string, days: number): void {
+  const safeId = userId.replace(/'/g, "''");
+  const safeDays = Math.trunc(days);
+  execSql(
+    `UPDATE "Users" SET "CreatedAt" = now() - interval '${safeDays} days' WHERE "Id" = '${safeId}';`,
+  );
+}
+
+/**
+ * Marca o tenant como já configurado (`Tenant.CompleteOnboarding`). Para o dono
+ * que toma 403 do MFA em toda rota, inclusive no `complete-onboarding`, e para a
+ * sessão de impersonação, que é só leitura.
+ */
+export function setTenantOnboardedDirect(tenantId: string): void {
+  const safeId = tenantId.replace(/'/g, "''");
+  execSql(`UPDATE "Tenants" SET "IsOnboarded" = true WHERE "Id" = '${safeId}';`);
+}
+
+/** Quantos links mágicos já foram emitidos para a conta deste e-mail (só o hash fica no banco). */
+export function countMagicLinkTokensDirect(email: string): number {
+  const safeEmail = email.replace(/'/g, "''");
+  const result = execSql(`
+    SELECT COUNT(*) FROM "MagicLinkTokens" m
+      JOIN "Users" u ON u."Id" = m."UserId"
+     WHERE LOWER(u."Email") = LOWER('${safeEmail}');
+  `);
+  return parseInt(result, 10);
+}
+
+/**
+ * Exclusão lógica do evento. Não há endpoint que exclua evento comercial (o
+ * caminho é cancelar); o soft-delete existe para o que vem de fora (purga do
+ * tenant), e o link público do formulário tem de fechar nele também (Etapa 233).
+ */
+export function softDeleteEventDirect(eventId: string): void {
+  const safeId = eventId.replace(/'/g, "''");
+  execSql(`UPDATE "Events" SET "IsDeleted" = true, "UpdatedAt" = now() WHERE "Id" = '${safeId}';`);
+}
+
+/**
+ * Validade do link do formulário pós-aceite vencida agora. O prazo real é o
+ * fim de D+1 no fuso do evento, gravado na emissão (Etapa 233); a festa não
+ * nasce no passado, então o "depois de D+1" se reproduz movendo o prazo.
+ */
+export function expireEventFormLinkDirect(eventId: string): void {
+  const safeId = eventId.replace(/'/g, "''");
+  execSql(
+    `UPDATE "Events" SET "FormPublicTokenExpiresAt" = now() - interval '1 minute' WHERE "Id" = '${safeId}';`,
+  );
+}
+
+/**
+ * Exclusão lógica da conversa. Não há endpoint nem tela que exclua conversa (o
+ * caminho é arquivar); o soft-delete existe e a anonimização por titular tem de
+ * alcançá-lo (PLANO-SEGURANCA §14, E167).
+ */
+export function softDeleteConversationDirect(conversationId: string): void {
+  const safeId = conversationId.replace(/'/g, "''");
+  execSql(`UPDATE "Conversations" SET "IsDeleted" = true, "UpdatedAt" = now() WHERE "Id" = '${safeId}';`);
+}
+
+/**
+ * Canal semeado passa a guardar a mídia recebida (`SaveMedia`) e a arquivar o
+ * binário no storage (`StoreMediaFiles`, opt-in LGPD da Etapa 106): o
+ * `ConversationMediaDownloadWorker` baixa do fake e grava a key no anexo.
+ */
+export function enableChannelMediaStorageDirect(phoneNumberId: string): void {
+  const safePhone = phoneNumberId.replace(/'/g, "''");
+  execSql(`
+    UPDATE "WhatsappChannelConfigs"
+       SET "SaveMedia" = true, "StoreMediaFiles" = true, "UpdatedAt" = now()
+     WHERE "PhoneNumberId" = '${safePhone}' AND "IsActive" = true;
+  `);
+}
+
+/** Anexos das mensagens de uma conversa como estão no banco (key de storage, nome e legenda). */
+export function messageAttachmentsDirect(
+  conversationId: string,
+): Array<{ mediaUrl: string; fileName: string | null; caption: string | null }> {
+  const safeId = conversationId.replace(/'/g, "''");
+  const json = execSql(`
+    SELECT COALESCE(json_agg(json_build_object(
+             'mediaUrl', a."MediaUrl", 'fileName', a."FileName", 'caption', a."Caption")), '[]')
+      FROM "MessageAttachments" a
+      JOIN "Messages" m ON m."Id" = a."MessageId"
+     WHERE m."ConversationId" = '${safeId}';
+  `);
+  return JSON.parse(json || '[]') as Array<{ mediaUrl: string; fileName: string | null; caption: string | null }>;
+}
+
+/** Id do usuário pelo e-mail (o `seedUserWithRoleDirect` só devolve e-mail e senha). */
+export function userIdByEmailDirect(email: string): string {
+  const safeEmail = email.replace(/'/g, "''");
+  const id = execSql(`SELECT "Id" FROM "Users" WHERE LOWER("Email") = LOWER('${safeEmail}');`);
+  if (!id) throw new Error(`usuário ${email} não encontrado`);
+  return id;
+}
+
+/**
+ * Troca o papel do usuário e gira o `SecurityStamp`, como faria a troca de papel
+ * de uma tela que ainda não existe: o access token aberto morre no próximo
+ * request (depois que o cache de estado do token é esquecido) e o refresh emite
+ * outro com o papel novo. Usado para o "Admin rebaixado com a tela aberta".
+ */
+export function setUserRoleDirect(userId: string, role: 'Owner' | 'Admin' | 'Manager' | 'Financial'): void {
+  const safeId = userId.replace(/'/g, "''");
+  execSql(`
+    UPDATE "Users"
+       SET "Role" = '${role}', "SecurityStamp" = replace(gen_random_uuid()::text, '-', ''), "UpdatedAt" = now()
+     WHERE "Id" = '${safeId}';
+  `);
+}
+
+/**
+ * Grava a categoria do orçamento sem passar pela validação do back: é a
+ * referência a uma categoria de OUTRO tenant que já estava no banco antes da
+ * Etapa 230, e que o aceite não pode transformar em checklist do evento.
+ */
+export function setBudgetEventCategoryDirect(budgetId: string, eventCategoryId: string): void {
+  const safeId = budgetId.replace(/'/g, "''");
+  const safeCategory = eventCategoryId.replace(/'/g, "''");
+  execSql(`UPDATE "Budgets" SET "EventCategoryId" = '${safeCategory}' WHERE "Id" = '${safeId}';`);
+}
+
+/**
+ * Gateway de cartão do tenant como TESTADO (`Enabled`). O teste de conexão
+ * (`POST /api/ticketing/gateway/verify`) chama o Asaas de verdade, com o
+ * endereço fixo no provider, e o E2E não tem essa saída: a credencial é gravada
+ * pelo `PUT` (cifrada pelo back) e só a marca de verificado vai por SQL.
+ */
+export function enableTicketingGatewayDirect(tenantId: string): void {
+  const safeTenant = tenantId.replace(/'/g, "''");
+  execSql(`
+    UPDATE "TenantPaymentGatewayConfigs"
+       SET "Enabled" = true, "LastVerifiedAt" = now(), "UpdatedAt" = now()
+     WHERE "TenantId" = '${safeTenant}';
+  `);
+}
+
+/** `Document` e `DocumentHash` do cliente como estão no banco (Etapa 234: cifrado + hash). */
+export function getClientDocumentColumnsDirect(clientId: string): { document: string; documentHash: string } {
+  const safeId = clientId.replace(/'/g, "''");
+  const row = execSql(
+    `SELECT coalesce("Document", '') || '|' || coalesce("DocumentHash", '') FROM "Clients" WHERE "Id" = '${safeId}';`,
+  );
+  const [document = '', documentHash = ''] = row.split('|');
+  return { document, documentHash };
+}
+
+/** `ClientCpf` e `Restrictions` do formulário pós-aceite como estão no banco. */
+export function getFormDataPersonalColumnsDirect(eventId: string): { clientCpf: string; restrictions: string } {
+  const safeId = eventId.replace(/'/g, "''");
+  const row = execSql(`
+    SELECT coalesce("ClientCpf", '') || '|' || coalesce("Restrictions", '')
+      FROM "PostApprovalFormData" WHERE "EventId" = '${safeId}' AND "IsDeleted" = false;
+  `);
+  const [clientCpf = '', restrictions = ''] = row.split('|');
+  return { clientCpf, restrictions };
+}
+
+/** Nomes das colunas de uma tabela, para afirmar que uma coluna NÃO existe mais. */
+export function tableColumnsDirect(table: string): string[] {
+  const safeTable = table.replace(/'/g, "''");
+  return execSql(
+    `SELECT column_name FROM information_schema.columns WHERE table_name = '${safeTable}' ORDER BY 1;`,
+  )
+    .split(/\r?\n/)
+    .filter((c) => c.length > 0);
+}
+
+/** A linha inteira do pedido de exportação em JSON (`row_to_json`), para procurar o token cru nela. */
+export function dataExportRowJsonDirect(exportId: string): string {
+  const safeId = exportId.replace(/'/g, "''");
+  return execSql(`SELECT row_to_json(r)::text FROM "DataExportRequests" r WHERE "Id" = '${safeId}';`);
+}
+
+/**
+ * Slug do link público de leads (`/leads/by-slug/{slug}`): é o `Subdomain` do
+ * tenant, que o signup não grava e o tenant não edita pela API (fica com o
+ * Super Admin). Grava um slug único, minúsculo como o lookup espera, e o
+ * devolve.
+ */
+export function setTenantSubdomainDirect(tenantId: string, slug: string): string {
+  const safeId = tenantId.replace(/'/g, "''");
+  const safeSlug = slug.toLowerCase().replace(/'/g, "''");
+  execSql(`UPDATE "Tenants" SET "Subdomain" = '${safeSlug}', "UpdatedAt" = now() WHERE "Id" = '${safeId}';`);
+  return safeSlug;
+}
+
+/**
+ * Insight do Painel (`AiInsights`) já detectado, status `New`. Quem os cria é o
+ * worker de detecção, que precisa de meses de histórico: para a tela mostrar a
+ * faixa com um cartão, a linha vai direto no banco. Devolve o id.
+ */
+export function seedAiInsightDirect(tenantId: string, title: string): string {
+  const safeTenant = tenantId.replace(/'/g, "''");
+  const safeTitle = title.replace(/'/g, "''");
+  return execSql(`
+    INSERT INTO "AiInsights"
+      ("Id", "TenantId", "Kind", "Severity", "DedupeKey", "Title", "Explanation",
+       "SuggestedAction", "MetricSnapshotJson", "AiGenerated", "DetectedAt", "DetectedOn",
+       "Status", "CreatedAt", "UpdatedAt", "IsDeleted")
+    VALUES
+      (gen_random_uuid(), '${safeTenant}', 1, 2, 'e2e-' || gen_random_uuid()::text,
+       '${safeTitle}', 'Receita do mes abaixo da media (E2E).', 'Revise as cobrancas em aberto.',
+       '{}', false, now(), current_date, 1, now(), now(), false)
+    RETURNING "Id";
+  `).split(/\r?\n/)[0]!.trim();
 }
 
 /**

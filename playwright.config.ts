@@ -78,6 +78,9 @@ export default defineConfig({
           command: 'npm run fakes:whatsapp',
           url: 'http://localhost:1512/_control/health',
           timeout: 30_000,
+          // App da Meta de TESTE (PLANO-SEGURANCA E143, E147): o fake confere
+          // `client_id`/`client_secret` e o `{AppId}` do upload contra os mesmos
+          // literais de `WhatsApp:AppId`/`AppSecret` do `appsettings.E2E.json`.
           reuseExistingServer: !process.env.CI,
         },
         {

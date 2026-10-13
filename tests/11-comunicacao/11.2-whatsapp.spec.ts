@@ -1,8 +1,10 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
+import { apiCreateContactIdentity } from '../../helpers/api-entities';
 import { fakeWhatsApp } from '../../helpers/fake-providers';
 import {
   enableFeatureFlagDirect,
   seedApprovedWhatsAppTemplateDirect,
+  seedConnectedWhatsappTenantDirect,
 } from '../../helpers/db-helper';
 
 /**
@@ -13,6 +15,11 @@ import {
  * (porta 1512). POST /api/whatsapp/outbound/send -> back HTTP POST pra
  * fake `/{PhoneNumberId}/messages` -> fake devolve wamid -> dispatch
  * persistido no DB. Inbox do fake confirma o request real.
+ *
+ * Etapa 242 (SEG-C2): o envio sai pelo canal DO TENANT — o `PhoneNumberId` e o
+ * token dele, nunca os de `WhatsApp:*` — e o template precisa do vinculo
+ * aprovado na WABA do tenant. O spec semeia os dois
+ * (`seedConnectedWhatsappTenantDirect`) e confere no inbox do fake.
  */
 
 test.describe('Fluxo 11.2 — WhatsApp', () => {
@@ -35,11 +42,16 @@ test.describe('Fluxo 11.2 — WhatsApp', () => {
       name: templateName,
       body: 'Ola, sua festa esta confirmada!',
     });
+    // Canal do tenant com token + vinculo aprovado na WABA dele (Etapa 242).
+    const channel = seedConnectedWhatsappTenantDirect(tenant.tenantId, [templateId]);
 
     const since = new Date().toISOString();
     await fakeWhatsApp.clear();
 
     const phone = `+5541${String(Date.now()).slice(-8)}`;
+    // Etapa 239 — o envio manual por telefone sem conversa exige contato
+    // cadastrado do tenant (senao 400 `WhatsAppOutbound.UnknownContact`).
+    await apiCreateContactIdentity(authApi, { whatsappPhones: [phone] });
     const sendRes = await authApi.post('/api/whatsapp/outbound/send', {
       data: {
         templateId,
@@ -61,8 +73,13 @@ test.describe('Fluxo 11.2 — WhatsApp', () => {
     // prova que o back fez HTTP real pra Cloud API ao inves de ficar so
     // logando (Logging provider).
     const inbox = await fakeWhatsApp.inbox({ since });
-    const sendCalls = inbox.filter((e) => e.method === 'POST' && /\/messages$/.test(e.path));
-    expect(sendCalls.length, 'fake deve ter recebido POST /messages do back').toBeGreaterThanOrEqual(1);
+    const sendCalls = inbox.filter(
+      (e) => e.method === 'POST' && e.path === `/${channel.phoneNumberId}/messages`,
+    );
+    expect(
+      sendCalls.length,
+      'fake deve ter recebido POST /<phoneNumberId do canal do tenant>/messages do back',
+    ).toBeGreaterThanOrEqual(1);
 
     const captured = sendCalls[sendCalls.length - 1]!;
     const body = captured.body as {
@@ -76,10 +93,17 @@ test.describe('Fluxo 11.2 — WhatsApp', () => {
     expect(body.template?.name).toBe(templateName);
     expect(body.to).toBe(phone);
 
-    // Header Authorization Bearer dummy chegou no fake (back aplicou auth)
+    // Etapa 242 — o Bearer e o token do canal do tenant, nunca o `WhatsApp:ApiKey`
+    // da plataforma (`fake-whatsapp-key-e2e`, que o fake recusa com 401).
     const authHeader = captured.headers['authorization'];
     const authStr = Array.isArray(authHeader) ? authHeader[0] : authHeader;
-    expect(authStr, 'back deve mandar Bearer <ApiKey>').toMatch(/^Bearer\s+/);
+    expect(authStr, 'back deve mandar o token do canal do tenant').toBe(
+      `Bearer ${channel.accessToken}`,
+    );
+    expect(
+      inbox.some((e) => e.path === '/fake_phone_e2e/messages'),
+      'nada sai pelo PhoneNumberId global da plataforma',
+    ).toBe(false);
   });
 
   test('@crud sync-approval do template consulta fake e devolve Approved', async ({

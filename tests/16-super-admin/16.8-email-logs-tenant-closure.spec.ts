@@ -1,22 +1,29 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
+import { superAdminTest } from '../../fixtures/super-admin.fixture';
 import { assertOk } from '../../helpers/response';
 
 /**
- * Fluxos extras — telas residuais do tenant:
- * - /app/email-logs (viewer de email logs por tenant)
+ * Fluxos extras — telas residuais:
+ * - trilha de envios de e-mail (painel do Super Admin)
  * - /app/tenant-closures (lista de solicitacoes de encerramento)
  *
- * Email logs eh recurso do tenant (nao SuperAdmin) via GET /api/email-logs.
- * Tenant fresh (signup) tem permission Email.Read por default na role Owner
- * — esperamos 200 deterministico (regressao de permission detectada como 403).
+ * Etapa 236 (PLANO-SEGURANCA §SEG-F item 7, E102): a trilha de e-mails eh
+ * cross-tenant e saiu de `/api/email-logs` para `/api/super-admin/email-logs`,
+ * para cair na restricao de rede do SuperAdmin. O tenant nao alcanca mais a rota
+ * antiga (404) nem a nova (403 `EmailLogs.SuperAdminOnly`); o Super Admin le.
  */
 
-test.describe('Email logs (tenant)', () => {
-  test('@flow GET /api/email-logs autenticado retorna 200 ou 403', async ({ authApi }) => {
-    const res = await authApi.get('/api/email-logs');
-    // Email.Read pode estar ou nao na role Owner default — back nao garante.
-    // O que NAO pode acontecer eh 5xx ou auth quebrada (401).
-    expect([200, 403], `status: ${res.status()}`).toContain(res.status());
+test.describe('Email logs (Super Admin)', () => {
+  test('@flow tenant: rota antiga /api/email-logs da 404 e a nova da 403', async ({ authApi }) => {
+    const old = await authApi.get('/api/email-logs');
+    expect(old.status(), 'rota antiga /api/email-logs').toBe(404);
+    const res = await authApi.get('/api/super-admin/email-logs');
+    expect(res.status(), 'tenant em /api/super-admin/email-logs').toBe(403);
+  });
+
+  superAdminTest('@flow Super Admin le /api/super-admin/email-logs', async ({ superAdminApi }) => {
+    const res = await superAdminApi.get('/api/super-admin/email-logs');
+    await assertOk(res, 'GET /api/super-admin/email-logs');
   });
 });
 

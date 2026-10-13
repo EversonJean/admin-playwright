@@ -1,10 +1,11 @@
 import { test as base, Page, APIRequestContext, request as playwrightRequest } from '@playwright/test';
-import { createApiContext, signupAndConfirm, SignupResult } from '../helpers/api-client';
+import { addSessionToContext, createApiContext, signupAndConfirm, SignupResult } from '../helpers/api-client';
 import { fakeTenant } from '../helpers/test-data';
 
 /**
- * Fixture `authTest` — entrega `authPage` já autenticada (tokens injetados no
- * localStorage via addInitScript) e `authApi` autenticado com Bearer.
+ * Fixture `authTest` — entrega `authPage` já autenticada (cookie de refresh
+ * `recreativo_refresh` no contexto + dica de sessão, Etapa 232) e `authApi`
+ * autenticado com Bearer.
  *
  * Cada teste cria seu próprio tenant + admin via API (signup → confirm via
  * SQL → login) e usa esses tokens. Reuso entre testes em paralelo é seguro
@@ -16,7 +17,7 @@ export interface AuthFixtures {
   tenant: SignupResult & { companyName: string; subdomain: string };
   /** API autenticado — chama endpoints `/api/*` com Authorization: Bearer já setado. */
   authApi: APIRequestContext;
-  /** Page já com tokens em localStorage. Navegação direta pra `/app/*` funciona. */
+  /** Page já com o cookie de refresh: o boot renova e a navegação direta pra `/app/*` funciona. */
   authPage: Page;
 }
 
@@ -52,15 +53,11 @@ export const authTest = base.extend<AuthFixtures>({
   },
 
   authPage: async ({ page, tenant }, use) => {
-    // Injeta tokens ANTES de qualquer script da página rodar — o auth-boot do
-    // front lê localStorage no startup e considera o usuário logado.
-    await page.addInitScript(
-      ({ access, refresh }) => {
-        localStorage.setItem('access_token', access);
-        if (refresh) localStorage.setItem('refresh_token', refresh);
-      },
-      { access: tenant.accessToken, refresh: tenant.refreshToken ?? null },
-    );
+    // Etapa 232 — o access token vive só em memória no front: o auth-boot
+    // restaura a sessão por `/api/auth/refresh` com o cookie, que precisa estar
+    // no contexto ANTES da primeira navegação. Cada carga de página gira o
+    // refresh, então `tenant.refreshToken` não serve mais depois de um goto.
+    await addSessionToContext(page.context(), tenant.refreshToken);
 
     await use(page);
   },

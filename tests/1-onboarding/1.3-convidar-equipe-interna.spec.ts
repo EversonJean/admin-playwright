@@ -54,7 +54,7 @@ test.describe('Fluxo 1.3 — Convidar equipe interna', () => {
     const token = createBody.data?.inviteToken ?? createBody.inviteToken;
     expect(token).toBeTruthy();
 
-    // 2. Novo context limpo (sem tokens do admin em localStorage) simula
+    // 2. Novo context limpo (sem o cookie de sessão do admin) simula
     // o convidado abrindo o link de aceite no browser dele.
     const ctx = await browser.newContext({
       ignoreHTTPSErrors: true,

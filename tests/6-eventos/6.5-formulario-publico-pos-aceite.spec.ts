@@ -1,6 +1,5 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
-import { createPublicApiContext } from '../../helpers/api-event-flow';
-import { getEventFormPublicTokenDirect } from '../../helpers/db-helper';
+import { apiIssueEventFormLink, createPublicApiContext } from '../../helpers/api-event-flow';
 import { setupAcceptedEvent } from '../../helpers/setup-flows';
 import { assertOk, readJson } from '../../helpers/response';
 import { smokeRoute } from '../../helpers/smoke';
@@ -9,8 +8,9 @@ import { smokeRoute } from '../../helpers/smoke';
  * Fluxo: 6.5 — Formulário público pós-aceite
  * Diagrama: docs/fluxos/negocio-6.5-formulario-publico-pos-aceite.mmd
  *
- * GET /api/public/events/:token/form devolve dados sem auth — token vem
- * do `FormPublicToken` do Event (lido via SQL, nao exposto pela API).
+ * GET /api/public/events/:token/form devolve dados sem auth — o token sai da
+ * URL que o gestor emite em POST /api/events/:id/form-link (Etapa 233: o banco
+ * guarda so o hash, e o aceite nao emite mais o link).
  */
 
 test.describe('Fluxo 6.5 — Formulário público pós-aceite', () => {
@@ -23,7 +23,7 @@ test.describe('Fluxo 6.5 — Formulário público pós-aceite', () => {
     authApi,
   }) => {
     const { eventId } = await setupAcceptedEvent(authApi);
-    const formToken = getEventFormPublicTokenDirect(eventId);
+    const { token: formToken } = await apiIssueEventFormLink(authApi, eventId);
     expect(formToken.length).toBeGreaterThan(10);
 
     const publicApi = await createPublicApiContext();

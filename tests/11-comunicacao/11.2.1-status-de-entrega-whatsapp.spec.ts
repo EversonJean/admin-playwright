@@ -1,9 +1,10 @@
 import { APIRequestContext, Page } from '@playwright/test';
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
-import { apiCompleteOnboarding } from '../../helpers/api-entities';
+import { apiCompleteOnboarding, apiCreateContactIdentity } from '../../helpers/api-entities';
 import {
   enableFeatureFlagDirect,
   seedApprovedWhatsAppTemplateDirect,
+  seedWhatsAppTemplateBindingDirect,
   seedWhatsappChannelDirect,
 } from '../../helpers/db-helper';
 import { fakeWhatsApp } from '../../helpers/fake-providers';
@@ -26,6 +27,10 @@ import { assertOk, readJson, unwrapList } from '../../helpers/response';
  * envio pelo wamid devolvido no envio. Com o `fake_phone` compartilhado, um
  * spec em outro worker desligava o canal entre o `delivered` e o `read`, e o
  * `read` caía no tenant alheio (2026-10-07).
+ *
+ * Etapa 242: o envio sai pelo canal do tenant (o `seedWhatsappChannelDirect`
+ * grava o token cifrado) e o template precisa do vínculo aprovado na WABA dele
+ * (`seedWhatsAppTemplateBindingDirect`), senão 409 `TemplateNotInWaba`.
  *
  * Sem diagrama `.mmd`: verificação de plano de ajustes.
  */
@@ -85,12 +90,17 @@ async function dispatchOf(api: APIRequestContext, conversationId: string, dispat
  */
 async function sendTemplate(
   api: APIRequestContext,
+  tenantId: string,
   phone: string,
 ): Promise<{ dispatchId: string; conversationId: string; wamid: string }> {
   const templateId = seedApprovedWhatsAppTemplateDirect({
     name: `status_e2e_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     body: 'Sua festa esta confirmada!',
   });
+  seedWhatsAppTemplateBindingDirect(tenantId, templateId);
+  // Etapa 239 — sem conversa, o telefone tem de ser contato cadastrado do
+  // tenant (senao 400 `WhatsAppOutbound.UnknownContact`).
+  await apiCreateContactIdentity(api, { whatsappPhones: [phone] });
   const since = new Date().toISOString();
   const res = await api.post('/api/whatsapp/outbound/send', {
     data: { templateId, phoneE164: phone, variableValues: {} },
@@ -157,11 +167,14 @@ async function postStatus(
 test.describe('Fluxo 11.2.1 — WhatsApp delivery status', () => {
   /** Id do canal do tenant do teste corrente; é por ele que o webhook acha o tenant. */
   let channel = '';
+  /** Tenant do teste corrente, dono do vínculo do template na WABA (Etapa 242). */
+  let tenantId = '';
 
   test.beforeEach(async ({ tenant }) => {
     enableFeatureFlagDirect(tenant.tenantId, 'feature_whatsapp');
     enableFeatureFlagDirect(tenant.tenantId, 'feature_conversations');
     channel = seedWhatsappChannelDirect(tenant.tenantId);
+    tenantId = tenant.tenantId;
   });
 
   test('@flow signed delivered then read webhooks show "Entregue" and "Lido" with the date in the send history', async ({
@@ -169,7 +182,7 @@ test.describe('Fluxo 11.2.1 — WhatsApp delivery status', () => {
     authPage,
   }) => {
     const phone = uniquePhone();
-    const sent = await sendTemplate(authApi, phone);
+    const sent = await sendTemplate(authApi, tenantId, phone);
 
     // Datas da Meta no passado recente, distintas, para conferir cada uma na tela.
     const now = Math.floor(Date.now() / 1000);
@@ -213,7 +226,7 @@ test.describe('Fluxo 11.2.1 — WhatsApp delivery status', () => {
     authPage,
   }) => {
     const phone = uniquePhone();
-    const sent = await sendTemplate(authApi, phone);
+    const sent = await sendTemplate(authApi, tenantId, phone);
     const now = Math.floor(Date.now() / 1000);
     const readTs = now - 1800;
 
@@ -245,7 +258,7 @@ test.describe('Fluxo 11.2.1 — WhatsApp delivery status', () => {
     authPage,
   }) => {
     const phone = uniquePhone();
-    const sent = await sendTemplate(authApi, phone);
+    const sent = await sendTemplate(authApi, tenantId, phone);
 
     await postStatus(channel, phone, sent.wamid, 'failed', Math.floor(Date.now() / 1000), [
       {

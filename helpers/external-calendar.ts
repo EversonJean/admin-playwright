@@ -12,6 +12,12 @@ import { assertOk, readJson } from './response';
  * o token de step-up no header (`external_calendar.connect`, plano §8.1 item 4).
  */
 
+/**
+ * Ação do step-up do `connect` (`ExternalCalendarConnectionAppService.StepUpAction`).
+ * Desde a Etapa 235 o token só vale para a ação pedida na emissão.
+ */
+export const EXTERNAL_CALENDAR_STEP_UP_ACTION = 'external_calendar.connect';
+
 export interface ExternalCalendarConnectionStatus {
   provider: string;
   status: 'Connected' | 'TokenRevoked' | 'Disconnected' | 'CalendarNotFound';
@@ -83,7 +89,7 @@ export async function apiConnectGoogleCalendar(
     sub: account.sub ?? `e2e-sub-${unique}`,
     email: account.email ?? `agenda-${unique}@example.com`,
   });
-  const stepUpToken = await apiStepUp(api, password);
+  const stepUpToken = await apiStepUp(api, password, EXTERNAL_CALENDAR_STEP_UP_ACTION);
 
   const res = await api.post('/api/calendar/google/connect', {
     data: { code: authorized.code, nonce },

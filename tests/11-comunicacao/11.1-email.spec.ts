@@ -1,5 +1,7 @@
 import { test as base, expect } from '@playwright/test';
 import { authTest } from '../../fixtures/auth.fixture';
+import { superAdminTest } from '../../fixtures/super-admin.fixture';
+import { assertOk } from '../../helpers/response';
 import { createApiContext } from '../../helpers/api-client';
 import { fakeTenant } from '../../helpers/test-data';
 import { fakeEmail } from '../../helpers/fake-providers';
@@ -18,11 +20,24 @@ import { fakeEmail } from '../../helpers/fake-providers';
  */
 
 base.describe('Fluxo 11.1 — Email', () => {
+  // Etapa 236 (PLANO-SEGURANCA §SEG-F item 7, E102): a trilha de envios saiu de
+  // `/api/email-logs` para `/api/super-admin/email-logs`. O tenant nao alcanca
+  // mais a rota antiga (404) nem a nova (403); o Super Admin le a nova.
   authTest(
-    '@flow GET /api/email-logs autenticado retorna 200/403 (sem 500)',
+    '@flow trilha de e-mails: tenant toma 404 na rota antiga e 403 na nova',
     async ({ authApi }) => {
-      const res = await authApi.get('/api/email-logs');
-      expect([200, 403], `status: ${res.status()}`).toContain(res.status());
+      const old = await authApi.get('/api/email-logs');
+      expect(old.status(), 'rota antiga /api/email-logs').toBe(404);
+      const res = await authApi.get('/api/super-admin/email-logs');
+      expect(res.status(), 'tenant em /api/super-admin/email-logs').toBe(403);
+    },
+  );
+
+  superAdminTest(
+    '@flow trilha de e-mails: Super Admin le /api/super-admin/email-logs',
+    async ({ superAdminApi }) => {
+      const res = await superAdminApi.get('/api/super-admin/email-logs');
+      await assertOk(res, 'GET /api/super-admin/email-logs');
     },
   );
 

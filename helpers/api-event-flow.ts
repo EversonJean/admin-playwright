@@ -58,6 +58,11 @@ export interface CreateBudgetInput {
   address?: Record<string, unknown>;
   /** Equipe contratada; vira o `TeamSize` do evento no aceite. Default 2. */
   teamSize?: number;
+  /**
+   * Categoria do evento (`EventCategory`): escolhe o modelo de contrato default
+   * da minuta no aceite e o checklist que o evento herda. Omitida = sem categoria.
+   */
+  eventCategoryId?: string;
 }
 
 function todayPlus(days: number): string {
@@ -114,6 +119,7 @@ export async function apiCreateBudget(
         }
       : {}),
     ...(input.packageId ? { packageId: input.packageId } : {}),
+    ...(input.eventCategoryId ? { eventCategoryId: input.eventCategoryId } : {}),
     ...(input.partnerSale
       ? {
           isPartnerSale: true,
@@ -296,6 +302,146 @@ export async function apiCreatePublicEvent(
   return unwrap(await res.json());
 }
 
+// ───────────────────────────── Ingressos (evento público) ─────────────────────────────
+
+/** POST /api/events/{id}/ticketing/types — lote ativo, sem teto. */
+export async function apiCreateTicketType(
+  api: APIRequestContext,
+  eventId: string,
+  input: { name?: string; price?: number } = {},
+): Promise<CreatedEntity & { name: string; price: number }> {
+  const res = await api.post(`/api/events/${eventId}/ticketing/types`, {
+    data: { name: input.name ?? `Pulseira E2E ${Date.now()}`, price: input.price ?? 30 },
+  });
+  await expectOk(res, 'apiCreateTicketType');
+  return unwrap(await res.json());
+}
+
+/**
+ * POST /api/events/{id}/ticketing/link — o link de venda do evento. Devolve a
+ * URL e o token do link (o trecho depois de `/tickets/`).
+ */
+export async function apiCreateTicketSaleLink(
+  api: APIRequestContext,
+  eventId: string,
+): Promise<{ url: string; token: string }> {
+  const res = await api.post(`/api/events/${eventId}/ticketing/link`);
+  await expectOk(res, 'apiCreateTicketSaleLink');
+  const link = unwrap<{ url: string }>(await res.json());
+  const marker = '/tickets/';
+  const idx = link.url.indexOf(marker);
+  if (idx < 0) throw new Error(`URL do link de venda sem /tickets/: ${link.url}`);
+  return { url: link.url, token: link.url.substring(idx + marker.length).split(/[?#]/)[0]! };
+}
+
+/** O pedido como a página pública o vê (`PublicOrderStatusDto`). */
+export interface PublicTicketOrder {
+  shortCode: string;
+  status: string;
+  /** Token CRU da página do pedido; só na resposta da criação (Etapa 233). */
+  statusToken: string | null;
+  tickets: Array<{ shortCode: string; qrToken: string; childName: string | null }>;
+}
+
+/**
+ * POST /api/public/tickets/{token}/orders — compra anônima pelo link. Default
+ * "pagar na entrada", que não exige chave Pix.
+ */
+export async function apiCreatePublicTicketOrder(
+  publicApi: APIRequestContext,
+  saleToken: string,
+  typeId: string,
+  input: { intent?: 'PixNow' | 'PayOnArrival'; responsibleName?: string; quantity?: number } = {},
+): Promise<PublicTicketOrder> {
+  const res = await publicApi.post(`/api/public/tickets/${saleToken}/orders`, {
+    data: {
+      buyer: {
+        responsibleName: input.responsibleName ?? `Comprador E2E ${Date.now()}`,
+        childrenNames: ['Criança E2E'],
+        primaryPhone: '41999990000',
+        marketingConsent: false,
+      },
+      lines: [{ ticketTypeId: typeId, quantity: input.quantity ?? 1 }],
+      intent: input.intent ?? 'PayOnArrival',
+      idempotencyKey: `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    },
+  });
+  await expectOk(res, 'apiCreatePublicTicketOrder');
+  return unwrap(await res.json()) as PublicTicketOrder;
+}
+
+/**
+ * POST /api/events/{id}/ticketing/retroactive com uma linha "ficou fiado"
+ * (`paidOnTheSpot: false`): o pedido nasce pendente, na fila de cobrança, e
+ * não expira sozinho. É a venda fiada do caderno de contingência do PDV.
+ */
+export async function apiRegisterDeferredTicketSale(
+  api: APIRequestContext,
+  eventId: string,
+  typeId: string,
+  responsibleName: string,
+): Promise<void> {
+  const res = await api.post(`/api/events/${eventId}/ticketing/retroactive`, {
+    data: {
+      entries: [
+        {
+          buyer: {
+            responsibleName,
+            childrenNames: ['Criança E2E'],
+            primaryPhone: '41999990000',
+            marketingConsent: false,
+          },
+          lines: [{ ticketTypeId: typeId, quantity: 1 }],
+          paidOnTheSpot: false,
+          paymentMethod: null,
+        },
+      ],
+    },
+  });
+  await expectOk(res, 'apiRegisterDeferredTicketSale');
+  const result = unwrap<{ created: number; failures: unknown[] }>(await res.json());
+  if (result.created !== 1) {
+    throw new Error(`apiRegisterDeferredTicketSale: ${JSON.stringify(result)}`);
+  }
+}
+
+export interface TicketParticipant {
+  orderId: string;
+  shortCode: string;
+  responsibleName: string;
+  status: string;
+  isDeferredPayment: boolean;
+}
+
+/** GET /api/events/{id}/ticketing/participants — os pedidos do evento, para o gestor. */
+export async function apiListTicketParticipants(
+  api: APIRequestContext,
+  eventId: string,
+): Promise<TicketParticipant[]> {
+  const res = await api.get(`/api/events/${eventId}/ticketing/participants`);
+  await expectOk(res, 'apiListTicketParticipants');
+  const data = unwrap<TicketParticipant[] | { items?: TicketParticipant[] }>(await res.json());
+  return Array.isArray(data) ? data : (data.items ?? []);
+}
+
+/**
+ * POST /api/events/{id}/ticketing/orders/{orderId}/status-link — o link da
+ * página de um pedido para o gestor enviar (cobrança do fiado, recibo). A URL
+ * leva o token de status em `?order=` (Etapa 233).
+ */
+export async function apiCreateTicketOrderStatusLink(
+  api: APIRequestContext,
+  eventId: string,
+  orderId: string,
+): Promise<{ url: string; statusToken: string }> {
+  const res = await api.post(`/api/events/${eventId}/ticketing/orders/${orderId}/status-link`);
+  await expectOk(res, 'apiCreateTicketOrderStatusLink');
+  const { url } = unwrap<{ url: string }>(await res.json());
+  const statusToken = new URL(url).searchParams.get('order');
+  if (!statusToken) throw new Error(`status-link sem ?order=: ${url}`);
+  return { url, statusToken };
+}
+
 export async function apiGetEvent(
   api: APIRequestContext,
   eventId: string,
@@ -331,6 +477,24 @@ export async function apiPatchEvent(
 ): Promise<void> {
   const res = await api.patch(`/api/events/${eventId}`, { data: input });
   await expectOk(res, 'apiPatchEvent');
+}
+
+/**
+ * POST /api/events/{id}/form-link — emite (ou devolve o vigente) o link do
+ * formulário pós-aceite. Desde a Etapa 233 o banco guarda só o hash do token
+ * (a coluna `FormPublicToken` saiu): o token cru existe apenas na URL que este
+ * endpoint devolve, o trecho depois de `/event-form/`.
+ */
+export async function apiIssueEventFormLink(
+  api: APIRequestContext,
+  eventId: string,
+): Promise<{ url: string; token: string }> {
+  const res = await api.post(`/api/events/${eventId}/form-link`);
+  await expectOk(res, 'apiIssueEventFormLink');
+  const { url } = unwrap<{ url: string | null }>(await res.json());
+  const marker = '/event-form/';
+  if (!url || !url.includes(marker)) throw new Error(`form-link sem ${marker}: ${url}`);
+  return { url, token: url.substring(url.indexOf(marker) + marker.length).split(/[?#]/)[0]! };
 }
 
 export async function apiAssignCollaborator(

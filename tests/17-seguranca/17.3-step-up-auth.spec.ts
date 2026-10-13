@@ -17,7 +17,7 @@ test.describe('Fluxo 17.3 — Step-up auth', () => {
 
   test('@crud step-up com senha correta devolve stepUpToken', async ({ authApi, tenant }) => {
     const res = await authApi.post('/api/auth/step-up', {
-      data: { method: 'Password', password: tenant.password },
+      data: { method: 'Password', password: tenant.password, action: 'change_plan' },
     });
     await assertOk(res, 'POST step-up senha correta');
     const data = await readJson<{ stepUpToken?: string; token?: string }>(res);
@@ -29,7 +29,7 @@ test.describe('Fluxo 17.3 — Step-up auth', () => {
 
   test('@crud step-up com senha errada devolve 401', async ({ authApi }) => {
     const res = await authApi.post('/api/auth/step-up', {
-      data: { method: 'Password', password: 'senha-errada-12345' },
+      data: { method: 'Password', password: 'senha-errada-12345', action: 'change_plan' },
     });
     expect(res.status(), 'senha errada deve ser 401 estrito').toBe(401);
   });

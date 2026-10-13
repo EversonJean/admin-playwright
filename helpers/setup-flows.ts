@@ -15,7 +15,7 @@ import {
 } from './api-event-flow';
 import { enableFeatureFlagDirect, seedCollaboratorPortalUserDirect, seedUserWithRoleDirect } from './db-helper';
 import { fakeClicksign } from './fake-providers';
-import { loginViaApi } from './api-client';
+import { addSessionToContext, loginViaApi } from './api-client';
 import { assertOk, readJson } from './response';
 
 const BACK_URL = process.env.BACK_URL ?? 'https://localhost:1501';
@@ -324,8 +324,9 @@ export interface SessionPage {
 
 /**
  * Abre um contexto de navegador NOVO com a sessão destes tokens (molde do
- * `13.4` e do `1.3`): o `localStorage` dele não tem o init script do
- * `authPage`, então a sessão não depende da ordem dos init scripts. O chamador
+ * `13.4` e do `1.3`): o jar dele não tem o cookie do `authPage`, então a
+ * sessão não se mistura com a do admin. Etapa 232: a sessão entra pelo cookie
+ * de refresh (`addSessionToContext`), e o boot do front renova. O chamador
  * fecha com `context.close()`.
  */
 export async function openSessionPage(
@@ -333,13 +334,7 @@ export async function openSessionPage(
   tokens: { accessToken: string; refreshToken: string },
 ): Promise<SessionPage> {
   const context = await browser.newContext({ baseURL: FRONT_URL, ignoreHTTPSErrors: true });
-  await context.addInitScript(
-    ({ access, refresh }) => {
-      localStorage.setItem('access_token', access);
-      if (refresh) localStorage.setItem('refresh_token', refresh);
-    },
-    { access: tokens.accessToken, refresh: tokens.refreshToken ?? null },
-  );
+  await addSessionToContext(context, tokens.refreshToken);
   return { page: await context.newPage(), context };
 }
 
@@ -404,7 +399,7 @@ export async function setupPortalUser(
   portalApi: APIRequestContext;
   collaboratorId: string;
   email: string;
-  /** Tokens do usuário de portal — para injetar no localStorage de uma Page (UI do Portal). */
+  /** Tokens do usuário de portal; `refreshToken` é o do cookie, para `addSessionToContext` (UI do Portal). */
   tokens: { accessToken: string; refreshToken: string };
   /**
    * Mantido para os chamadores antigos: o contexto anônimo do login já é
