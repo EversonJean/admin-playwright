@@ -1,4 +1,4 @@
-import { APIRequestContext } from '@playwright/test';
+import { APIRequestContext, APIResponse } from '@playwright/test';
 import {
   fakeActivity,
   fakeClient,
@@ -400,6 +400,85 @@ export async function apiSetEventDepartureLocation(
 ): Promise<void> {
   const res = await api.put(`/api/events/${eventId}/departure-location`, { data: { stockLocationId } });
   await expectOk(res, 'apiSetEventDepartureLocation');
+}
+
+/** Grupo da categoria de evento (`EventCategoryGroup`). */
+export type EventCategoryGroup = 'Festa' | 'PontoFixo' | 'Corporativo' | 'Comunitario';
+
+/** POST /api/event-categories — categoria do grupo dado, com nome único. */
+export async function apiCreateEventCategory(
+  api: APIRequestContext,
+  group: EventCategoryGroup,
+  name = `Categoria E2E ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+): Promise<CreatedEntity & { name: string }> {
+  const res = await api.post('/api/event-categories', { data: { name, group } });
+  await expectOk(res, 'apiCreateEventCategory');
+  const body = await res.json();
+  return { ...(body.data ?? body), name };
+}
+
+/**
+ * POST /api/collaborator-levels — nível com valor base. Sem nenhum, o custo de
+ * equipe fica "indisponível" e a estimativa de custo do orçamento não fecha.
+ */
+export async function apiCreateCollaboratorLevel(api: APIRequestContext, baseValue = 150): Promise<CreatedEntity> {
+  const res = await api.post('/api/collaborator-levels', {
+    data: { name: `Nível E2E ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, order: 50, baseValue },
+  });
+  await expectOk(res, 'apiCreateCollaboratorLevel');
+  const body = await res.json();
+  return body.data ?? body;
+}
+
+export type CommissionKind = 'FixedAmount' | 'Percentage' | 'Bonus';
+
+export interface CommissionInput {
+  collaboratorId: string;
+  kind: CommissionKind;
+  value: number;
+  notes?: string;
+}
+
+/** POST /api/events/:id/commissions sem afirmar o status — para o caso recusado. */
+export function apiTryCreateCommission(
+  api: APIRequestContext,
+  eventId: string,
+  input: CommissionInput,
+): Promise<APIResponse> {
+  return api.post(`/api/events/${eventId}/commissions`, {
+    data: { collaboratorId: input.collaboratorId, kind: input.kind, value: input.value, notes: input.notes ?? null },
+  });
+}
+
+/** POST /api/events/:id/commissions */
+export async function apiCreateCommission(
+  api: APIRequestContext,
+  eventId: string,
+  input: CommissionInput,
+): Promise<CreatedEntity> {
+  const res = await apiTryCreateCommission(api, eventId, input);
+  await expectOk(res, 'apiCreateCommission');
+  const body = await res.json();
+  return body.data ?? body;
+}
+
+/** POST /api/events/:id/expenses — despesa do evento (`Expense` de escopo `Event`). */
+export async function apiCreateEventExpense(
+  api: APIRequestContext,
+  eventId: string,
+  input: { amount: number; category: string; date: string; description?: string },
+): Promise<CreatedEntity> {
+  const res = await api.post(`/api/events/${eventId}/expenses`, {
+    data: {
+      amount: input.amount,
+      category: input.category,
+      date: input.date,
+      description: input.description ?? null,
+    },
+  });
+  await expectOk(res, 'apiCreateEventExpense');
+  const body = await res.json();
+  return body.data ?? body;
 }
 
 /** GET /api/clients — útil pra validar listagem após criar */

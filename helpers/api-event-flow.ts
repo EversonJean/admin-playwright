@@ -63,6 +63,17 @@ export interface CreateBudgetInput {
    * da minuta no aceite e o checklist que o evento herda. Omitida = sem categoria.
    */
   eventCategoryId?: string;
+  /**
+   * Modo de cobrança (Etapa 247, PLANO-EVENTO-COMUNITARIO): `Community` é a
+   * ação comunitária sem cobrança e exige `budgets.community`. Omitido = `Charged`.
+   */
+  chargeMode?: 'Charged' | 'Community';
+  /** Desconto em % do subtotal. Omitido = sem desconto. */
+  discountPercentage?: number;
+  /** Valor cobrado por colaborador. Default 200. */
+  teamPricePerCollaborator?: number;
+  /** Taxa de deslocamento cobrada. Default 0. */
+  displacementFee?: number;
 }
 
 function todayPlus(days: number): string {
@@ -106,8 +117,10 @@ export async function apiCreateBudget(
     validUntil: input.validUntilDate ?? defaultValidUntil(eventDate),
     ...(input.address ? { address: input.address } : {}),
     teamSize: input.teamSize ?? 2,
-    teamPricePerCollaborator: 200,
-    displacementFee: 0,
+    teamPricePerCollaborator: input.teamPricePerCollaborator ?? 200,
+    displacementFee: input.displacementFee ?? 0,
+    ...(input.discountPercentage !== undefined ? { discountPercentage: input.discountPercentage } : {}),
+    ...(input.chargeMode ? { chargeMode: input.chargeMode } : {}),
     items: input.activityIds.map((id) => ({ activityId: id, quantity: 1 })),
     ...(input.recurrence
       ? {

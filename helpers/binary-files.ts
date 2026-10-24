@@ -196,3 +196,117 @@ export function readZipEntries(zip: Buffer): Map<string, Buffer> {
   }
   return entries;
 }
+
+// ─────────────────────────── planilhas exportadas ───────────────────────────
+
+function decodeXmlText(text: string): string {
+  return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n: string) => String.fromCodePoint(Number(n)))
+    .replace(/&amp;/g, '&');
+}
+
+/** `A` -> 0, `Z` -> 25, `AA` -> 26. */
+function columnIndex(letters: string): number {
+  let index = 0;
+  for (const ch of letters) index = index * 26 + (ch.charCodeAt(0) - 64);
+  return index - 1;
+}
+
+/**
+ * As linhas de uma aba de um `.xlsx` (relatório exportado pelo ClosedXML), como
+ * texto: string compartilhada, string inline ou o número cru do `<v>`. Célula
+ * ausente ou vazia vira `''`, para o spec distinguir "vazio" de "zero".
+ */
+export function readXlsxRows(xlsx: Buffer, sheet = 1): string[][] {
+  const entries = readZipEntries(xlsx);
+  // Os elementos podem vir com prefixo de namespace (`<x:row>`), conforme o
+  // gerador; as expressões aceitam os dois.
+  const p = '(?:[A-Za-z]\\w*:)?';
+  const textOf = (xml: string) =>
+    decodeXmlText(
+      [...xml.matchAll(new RegExp(`<${p}t(?:\\s[^>]*)?>([\\s\\S]*?)</${p}t>`, 'g'))].map((m) => m[1] ?? '').join(''),
+    );
+  const shared: string[] = [];
+  const sharedEntry = [...entries.keys()].find((name) => /^xl\/sharedStrings\d*\.xml$/i.test(name));
+  const sharedXml = sharedEntry ? entries.get(sharedEntry)!.toString('utf8') : '';
+  for (const si of sharedXml.match(new RegExp(`<${p}si\\b[^>]*>[\\s\\S]*?</${p}si>`, 'g')) ?? []) {
+    shared.push(textOf(si));
+  }
+  const sheetXml = entries.get(`xl/worksheets/sheet${sheet}.xml`)?.toString('utf8');
+  if (!sheetXml) {
+    throw new Error(`readXlsxRows: aba ${sheet} não encontrada em [${[...entries.keys()].join(', ')}]`);
+  }
+
+  const rows: string[][] = [];
+  const rowPattern = new RegExp(`<${p}row\\b([^>]*?)(?:/>|>([\\s\\S]*?)</${p}row>)`, 'g');
+  const cellPattern = new RegExp(`<${p}c\\b([^>]*?)(?:/>|>([\\s\\S]*?)</${p}c>)`, 'g');
+  const valuePattern = new RegExp(`<${p}v(?:\\s[^>]*)?>([\\s\\S]*?)</${p}v>`);
+  let nextRow = 0;
+  for (const rowMatch of sheetXml.matchAll(rowPattern)) {
+    const declared = /\br="(\d+)"/.exec(rowMatch[1] ?? '')?.[1];
+    const rowIndex = declared ? Number(declared) - 1 : nextRow;
+    nextRow = rowIndex + 1;
+    const cells: string[] = [];
+    let nextCol = 0;
+    for (const cell of (rowMatch[2] ?? '').matchAll(cellPattern)) {
+      const attrs = cell[1] ?? '';
+      const ref = /\br="([A-Z]+)\d+"/.exec(attrs)?.[1];
+      const colIndex = ref ? columnIndex(ref) : nextCol;
+      nextCol = colIndex + 1;
+      const type = /\bt="([^"]+)"/.exec(attrs)?.[1];
+      const inner = cell[2] ?? '';
+      const raw = valuePattern.exec(inner)?.[1];
+      let value = '';
+      if (type === 's' && raw !== undefined) value = shared[Number(raw)] ?? '';
+      else if (type === 'inlineStr') value = textOf(inner);
+      else if (raw !== undefined) value = decodeXmlText(raw);
+      cells[colIndex] = value;
+    }
+    rows[rowIndex] = Array.from(cells, (c) => c ?? '');
+  }
+  if (rows.length === 0) {
+    throw new Error(`readXlsxRows: nenhuma linha na aba ${sheet}: ${sheetXml.slice(0, 400)}`);
+  }
+  return Array.from(rows, (r) => r ?? []);
+}
+
+/**
+ * CSV (RFC 4180, separador vírgula, aspas dobradas) em linhas de células, sem o
+ * BOM. É o formato do `FormulaSafeCsvWriter` do back (cultura invariante).
+ */
+export function parseCsv(text: string): string[][] {
+  const source = text.replace(/^﻿/, '');
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i]!;
+    if (quoted) {
+      if (ch === '"' && source[i + 1] === '"') {
+        cell += '"';
+        i++;
+      } else if (ch === '"') quoted = false;
+      else cell += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ',') {
+      row.push(cell);
+      cell = '';
+    } else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && source[i + 1] === '\n') i++;
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+    } else cell += ch;
+  }
+  if (cell !== '' || row.length > 0) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows;
+}
