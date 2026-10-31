@@ -75,8 +75,9 @@ async function planNumbers(api: APIRequestContext, eventId: string) {
 }
 
 test.describe('Fluxo 10.3 — Ajustes financeiros', () => {
-  test('@flow tela de recebíveis carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/finance/receivables');
+  test('@flow tela de recebíveis carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/finance/receivables', { ready: 'pending-payments-page' });
   });
 
   test('@crud aplica discount em parcela e ajuste fica na listagem', async ({ authApi }) => {

@@ -1,6 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
-import { apiCreateActivity, apiCreateClient } from '../../helpers/api-entities';
+import { apiCreateActivity, apiCreateClient, apiCompleteOnboarding } from '../../helpers/api-entities';
 import {
   apiAcceptPublicBudget,
   apiCreateBudget,
@@ -20,8 +20,9 @@ import {
  */
 
 test.describe('Fluxo 10.1 — Pagamentos manuais', () => {
-  test('@flow tela de recebíveis carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/finance/receivables');
+  test('@flow tela de recebíveis carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/finance/receivables', { ready: 'pending-payments-page' });
   });
 
   test('@crud registra pagamento Pix em evento e atualiza summary', async ({ authApi }) => {

@@ -14,11 +14,11 @@ test.describe('Fluxo 2.2 — Pacotes', () => {
   });
 
   test('@flow tela de listagem carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/packages/list');
+    await smokeRoute(authPage, '/app/packages/list', { ready: 'packages-list-page' });
   });
 
   test('@flow tela de criação carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/packages/new');
+    await smokeRoute(authPage, '/app/packages/new', { ready: 'package-form-page' });
   });
 
   test('@crud cria pacote via UI (pricing Calculated) e valida no back', async ({

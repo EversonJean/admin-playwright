@@ -1,5 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 
 /**
  * Fluxo extra — Event form fields configuraveis (Etapa 55)
@@ -8,8 +9,9 @@ import { smokeRoute } from '../../helpers/smoke';
  */
 
 test.describe('Event Form Fields (settings)', () => {
-  test('@flow tela carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/settings/event-form-fields');
+  test('@flow tela carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/settings/event-form-fields', { ready: 'form-fields-page' });
   });
 
   test('@crud cria field Text + aparece em GET', async ({ authApi }) => {

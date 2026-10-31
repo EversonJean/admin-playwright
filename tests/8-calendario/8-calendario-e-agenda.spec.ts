@@ -1,6 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
-import { apiCreateCollaborator } from '../../helpers/api-entities';
+import { apiCreateCollaborator, apiCompleteOnboarding } from '../../helpers/api-entities';
 
 /**
  * Fluxo: 8 — Calendário e agenda
@@ -11,8 +11,9 @@ import { apiCreateCollaborator } from '../../helpers/api-entities';
  */
 
 test.describe('Fluxo 8 — Calendário e agenda', () => {
-  test('@flow tela de calendário carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/schedule/calendar');
+  test('@flow tela de calendário carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/schedule/calendar', { ready: 'calendar-page' });
   });
 
   test('@crud GET schedule de colab novo retorna lista vazia no periodo', async ({

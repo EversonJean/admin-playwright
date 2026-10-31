@@ -1,7 +1,7 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
 import { setupAcceptedEvent } from '../../helpers/setup-flows';
-import { apiCreateClient } from '../../helpers/api-entities';
+import { apiCreateClient, apiCompleteOnboarding } from '../../helpers/api-entities';
 import {
   apiAcceptPublicBudget,
   apiCreateBudget,
@@ -118,8 +118,9 @@ function getChecklist(api: APIRequestContext, eventId: string): Promise<Checklis
 
 test.describe('Fluxo 6.7 — Checklist de materiais da festa', () => {
   test('@flow aba do evento carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
     const { eventId } = await setupAcceptedEvent(authApi);
-    await smokeRoute(authPage, `/app/events/${eventId}`);
+    await smokeRoute(authPage, `/app/events/${eventId}`, { ready: 'event-detail-page' });
   });
 
   // 🔑 O teste que separa esta etapa da previsão de material da aba Materiais.

@@ -15,7 +15,7 @@ test.describe('Fluxo 1.3 — Convidar equipe interna', () => {
   });
 
   test('@flow tela de invites carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/users/invites');
+    await smokeRoute(authPage, '/app/users/invites', { ready: 'invitations-page' });
   });
 
   test('@flow listar invitations autenticado retorna ok', async ({ authApi }) => {

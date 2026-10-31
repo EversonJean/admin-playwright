@@ -1,5 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 import { superAdminTest } from '../../fixtures/super-admin.fixture';
 import { assertOk, readJson, unwrapList } from '../../helpers/response';
 
@@ -9,8 +10,9 @@ import { assertOk, readJson, unwrapList } from '../../helpers/response';
  */
 
 test.describe('Fluxo 16.4 — Suporte e bugs (tenant)', () => {
-  test('@flow tela de bugs do tenant carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/support/bugs');
+  test('@flow tela de bugs do tenant carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/support/bugs', { ready: 'bugs-list-page' });
   });
 
   test('@crud tenant cria bug + visualiza no GET /api/bugs', async ({ authApi }) => {

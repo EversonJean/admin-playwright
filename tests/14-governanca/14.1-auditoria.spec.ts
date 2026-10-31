@@ -1,6 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
-import { apiCreateClient } from '../../helpers/api-entities';
+import { apiCreateClient, apiCompleteOnboarding } from '../../helpers/api-entities';
 
 /**
  * Fluxo: 14.1 — Auditoria
@@ -8,8 +8,9 @@ import { apiCreateClient } from '../../helpers/api-entities';
  */
 
 test.describe('Fluxo 14.1 — Auditoria', () => {
-  test('@flow tela de audit logs carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/settings/audit');
+  test('@flow tela de audit logs carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/settings/audit', { ready: 'audit-page' });
   });
 
   test('@crud cria client e audit log registra a operacao', async ({ authApi }) => {

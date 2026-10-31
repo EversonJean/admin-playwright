@@ -1,5 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 import { fakeAsaas } from '../../helpers/fake-providers';
 
 /**
@@ -17,8 +18,9 @@ import { fakeAsaas } from '../../helpers/fake-providers';
  */
 
 test.describe('Fluxo 16.3 — Cobrança Asaas', () => {
-  test('@flow tela de faturas carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/billing/invoices');
+  test('@flow tela de faturas carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/billing/invoices', { ready: 'invoices-page' });
   });
 
   test('@crud webhook PAYMENT_CREATED → auto-cria Invoice → PAYMENT_CONFIRMED → Paid', async ({

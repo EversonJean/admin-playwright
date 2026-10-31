@@ -15,19 +15,19 @@ test.describe('Fluxo 9.5 — Contratos parceiro e colaborador', () => {
   });
 
   test('@flow listagem de contratos de parceiro carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/contracts/partner/list');
+    await smokeRoute(authPage, '/app/contracts/partner/list', { ready: 'partner-contracts-list-page' });
   });
 
   test('@flow criação de contrato de parceiro carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/contracts/partner/new');
+    await smokeRoute(authPage, '/app/contracts/partner/new', { ready: 'partner-contract-form-page' });
   });
 
   test('@flow listagem de contratos de colaborador carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/contracts/collaborator/list');
+    await smokeRoute(authPage, '/app/contracts/collaborator/list', { ready: 'collaborator-contracts-list-page' });
   });
 
   test('@flow criação de contrato de colaborador carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/contracts/collaborator/new');
+    await smokeRoute(authPage, '/app/contracts/collaborator/new', { ready: 'collaborator-contract-form-page' });
   });
 
   test('@crud cria contrato com parceiro (PJ) via UI e valida no back', async ({

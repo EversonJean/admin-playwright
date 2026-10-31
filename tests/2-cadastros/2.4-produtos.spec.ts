@@ -14,11 +14,11 @@ test.describe('Fluxo 2.4 — Produtos', () => {
   });
 
   test('@flow tela de listagem carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/products/list');
+    await smokeRoute(authPage, '/app/products/list', { ready: 'products-list-page' });
   });
 
   test('@flow tela de criação carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/products/new');
+    await smokeRoute(authPage, '/app/products/new', { ready: 'product-form-page' });
   });
 
   test('@crud cria produto via UI e valida no back', async ({ authPage, authApi }) => {

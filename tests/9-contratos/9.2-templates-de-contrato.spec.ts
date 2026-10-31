@@ -14,15 +14,15 @@ test.describe('Fluxo 9.2 — Templates de contrato', () => {
   });
 
   test('@flow listagem de templates carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/contract-templates/list');
+    await smokeRoute(authPage, '/app/contract-templates/list', { ready: 'templates-list-page' });
   });
 
   test('@flow criação de template carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/contract-templates/new');
+    await smokeRoute(authPage, '/app/contract-templates/new', { ready: 'template-form-page' });
   });
 
   test('@flow variáveis de contrato carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/settings/contract-variables');
+    await smokeRoute(authPage, '/app/settings/contract-variables', { ready: 'contract-variables-page' });
   });
 
   test('@crud cria template de contrato via UI e valida no back', async ({

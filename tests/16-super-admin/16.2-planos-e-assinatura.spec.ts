@@ -1,5 +1,6 @@
 import { authTest as test } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 import { superAdminTest, expect } from '../../fixtures/super-admin.fixture';
 import { assertOk, readJson, unwrapList } from '../../helpers/response';
 
@@ -9,12 +10,14 @@ import { assertOk, readJson, unwrapList } from '../../helpers/response';
  */
 
 test.describe('Fluxo 16.2 — Planos e assinatura (tenant view)', () => {
-  test('@flow tela "meu plano" carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/billing/my-plan');
+  test('@flow tela "meu plano" carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/billing/my-plan', { ready: 'my-plan-page' });
   });
 
-  test('@flow tela de comparação de planos carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/billing/plans');
+  test('@flow tela de comparação de planos carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/billing/plans', { ready: 'plans-comparison-page' });
   });
 
   test('@flow GET /api/billing/plans devolve catalogo publico', async ({ authApi }) => {

@@ -16,7 +16,7 @@ import { smokeRoute } from '../../helpers/smoke';
 test.describe('Fluxo 6.5 — Formulário público pós-aceite', () => {
   test('@flow rota /event-form/:token carrega no front sem 5xx', async ({ page }) => {
     // SPA Angular: rota com token invalido carrega shell + tela de erro.
-    await smokeRoute(page, '/event-form/token-invalido-teste');
+    await smokeRoute(page, '/event-form/token-invalido-teste', { ready: 'public-event-form-page' });
   });
 
   test('@crud GET /api/public/events/:token/form devolve payload do evento aceito', async ({

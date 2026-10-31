@@ -39,8 +39,9 @@ interface TeamRow {
 }
 
 test.describe('Fluxo 7.1 — Escalar colaboradores', () => {
-  test('@flow listagem de eventos carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/events/list');
+  test('@flow listagem de eventos carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/events/list', { ready: 'events-list-page' });
   });
 
   test('@crud assign colaborador ao evento aparece em collaborators[]', async ({ authApi }) => {

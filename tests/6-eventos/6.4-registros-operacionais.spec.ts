@@ -1,5 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 
 /**
  * Fluxo: 6.4 — Registros operacionais (não-comerciais)
@@ -10,8 +11,9 @@ import { smokeRoute } from '../../helpers/smoke';
  */
 
 test.describe('Fluxo 6.4 — Registros operacionais', () => {
-  test('@flow criação de evento operacional carrega', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/events/new-operational');
+  test('@flow criação de evento operacional carrega', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/events/new-operational', { ready: 'operational-form-page' });
   });
 
   test('@crud ExternalCommitment criado via /operational fica visivel na listagem', async ({

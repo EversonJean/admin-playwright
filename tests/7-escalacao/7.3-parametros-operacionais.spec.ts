@@ -60,19 +60,19 @@ test.describe('Fluxo 7.3 — Parâmetros operacionais', () => {
   });
 
   test('@flow modalidades carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/settings/service-modalities');
+    await smokeRoute(authPage, '/app/settings/service-modalities', { ready: 'modalities-list-page' });
   });
 
   test('@flow níveis de colaborador carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/settings/collaborator-levels');
+    await smokeRoute(authPage, '/app/settings/collaborator-levels', { ready: 'levels-list-page' });
   });
 
   test('@flow termos de pagamento carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/settings/payment-terms');
+    await smokeRoute(authPage, '/app/settings/payment-terms', { ready: 'payment-terms-list-page' });
   });
 
   test('@flow tela geral de parâmetros carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/settings/parameters');
+    await smokeRoute(authPage, '/app/settings/parameters', { ready: 'parameters-page' });
   });
 
   test('@crud cria modalidade via UI e valida no back', async ({ authPage, authApi }) => {

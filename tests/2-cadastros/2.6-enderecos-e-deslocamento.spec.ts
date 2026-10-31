@@ -19,11 +19,11 @@ test.describe('Fluxo 2.6 — Endereços e deslocamento', () => {
   });
 
   test('@flow tela de tabela de deslocamento carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/settings/displacement');
+    await smokeRoute(authPage, '/app/settings/displacement', { ready: 'displacement-list-page' });
   });
 
   test('@flow tela de criação de regra carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/settings/displacement/new');
+    await smokeRoute(authPage, '/app/settings/displacement/new', { ready: 'displacement-form-page' });
   });
 
   test('@crud cria regra de deslocamento via UI (1 faixa Free open-ended)', async ({

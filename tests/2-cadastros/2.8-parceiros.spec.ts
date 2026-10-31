@@ -28,8 +28,8 @@ test.describe('Fluxo 2.8 — Parceiros e venda via parceiro', () => {
   });
 
   test('@flow lista e ficha do parceiro carregam autenticadas', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/partners/list');
-    await smokeRoute(authPage, '/app/partners/new');
+    await smokeRoute(authPage, '/app/partners/list', { ready: 'partners-list-page' });
+    await smokeRoute(authPage, '/app/partners/new', { ready: 'client-form-page' });
   });
 
   test('@crud cadastra parceiro pela UI e ele aparece na lista de Parceiros', async ({
@@ -88,7 +88,13 @@ test.describe('Fluxo 2.8 — Parceiros e venda via parceiro', () => {
 
     // "Salvar e criar evento agora" = POST /budgets + POST /budgets/{id}/accept
     // encadeados (decisão 4 do plano: sem endpoint novo).
-    await authPage.getByTestId('budget-form-save-and-create-event').click();
+    // Etapa 274: o botão fica desabilitado enquanto a ficha do parceiro (que
+    // preenche o local) e a prévia de preço não voltam. Clicar antes validava
+    // o form sem o local e não salvava nada (3 em 8 execuções).
+    const saveAndCreate = authPage.getByTestId('budget-form-save-and-create-event');
+    await expect(saveAndCreate).toBeEnabled({ timeout: 15_000 });
+    await expect(authPage.getByTestId('budget-form-eventLocation')).toHaveValue(partnerName);
+    await saveAndCreate.click();
     await authPage.getByTestId('confirm-ok').click();
     await authPage.waitForURL(/\/app\/events\/[0-9a-f-]+(\?|$)/i, { timeout: 15_000 });
 

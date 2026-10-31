@@ -1,6 +1,7 @@
 import { expect } from '@playwright/test';
 import { authTest } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 import { assertOk, readJson } from '../../helpers/response';
 
 /**
@@ -19,11 +20,12 @@ import { assertOk, readJson } from '../../helpers/response';
 
 authTest.describe('Telas misc (smoke + /api/auth/me)', () => {
   authTest('@flow /app/onboarding carrega autenticado', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/onboarding');
+    await smokeRoute(authPage, '/app/onboarding', { ready: 'onboarding-page' });
   });
 
-  authTest('@flow /app/billing/blocked carrega autenticado', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/billing/blocked');
+  authTest('@flow /app/billing/blocked carrega autenticado', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/billing/blocked', { ready: 'module-blocked' });
   });
 
   authTest('@flow GET /api/auth/me devolve dados do user logado', async ({ authApi, tenant }) => {

@@ -1,6 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
-import { apiCreateActivity, apiCreateClient } from '../../helpers/api-entities';
+import { apiCreateActivity, apiCreateClient, apiCompleteOnboarding } from '../../helpers/api-entities';
 import { apiCreateBudget, apiGetBudget } from '../../helpers/api-event-flow';
 
 /**
@@ -9,12 +9,14 @@ import { apiCreateBudget, apiGetBudget } from '../../helpers/api-event-flow';
  */
 
 test.describe('Fluxo 5.1 — Montagem do orçamento', () => {
-  test('@flow tela de listagem carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/budgets/list');
+  test('@flow tela de listagem carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/budgets/list', { ready: 'budgets-list-page' });
   });
 
-  test('@flow tela de criação rápida carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/budgets/quick');
+  test('@flow tela de criação rápida carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/budgets/quick', { ready: 'budget-form-page' });
   });
 
   test('@crud cria orcamento via API com items + valida total/status Draft', async ({ authApi }) => {

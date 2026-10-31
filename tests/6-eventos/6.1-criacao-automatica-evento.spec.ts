@@ -1,5 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 import { apiGetEvent } from '../../helpers/api-event-flow';
 import { setupAcceptedEvent } from '../../helpers/setup-flows';
 import { assertOk, readJson } from '../../helpers/response';
@@ -11,12 +12,14 @@ import { GUID_REGEX, type EventDTO } from '../../helpers/types';
  */
 
 test.describe('Fluxo 6.1 — Criação automática do evento', () => {
-  test('@flow listagem de eventos carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/events/list');
+  test('@flow listagem de eventos carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/events/list', { ready: 'events-list-page' });
   });
 
-  test('@flow criação manual operacional carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/events/new-operational');
+  test('@flow criação manual operacional carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/events/new-operational', { ready: 'operational-form-page' });
   });
 
   test('@crud aceite de orcamento auto-cria Event Commercial linkado', async ({ authApi }) => {

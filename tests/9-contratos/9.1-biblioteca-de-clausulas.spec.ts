@@ -14,11 +14,11 @@ test.describe('Fluxo 9.1 — Biblioteca de cláusulas', () => {
   });
 
   test('@flow tela de listagem carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/clauses/list');
+    await smokeRoute(authPage, '/app/clauses/list', { ready: 'clauses-list-page' });
   });
 
   test('@flow tela de criação carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/clauses/new');
+    await smokeRoute(authPage, '/app/clauses/new', { ready: 'clause-form-page' });
   });
 
   test('@crud cria clausula via UI e valida no back', async ({ authPage, authApi }) => {

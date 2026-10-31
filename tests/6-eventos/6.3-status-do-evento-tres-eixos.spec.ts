@@ -1,5 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 import { apiGetEvent } from '../../helpers/api-event-flow';
 import { setupAcceptedEvent } from '../../helpers/setup-flows';
 import type { EventDTO } from '../../helpers/types';
@@ -15,8 +16,9 @@ import type { EventDTO } from '../../helpers/types';
  */
 
 test.describe('Fluxo 6.3 — Três eixos de status', () => {
-  test('@flow listagem de eventos exibe coluna de status', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/events/list');
+  test('@flow listagem de eventos exibe coluna de status', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/events/list', { ready: 'events-list-page' });
   });
 
   test('@crud evento recem-aceito tem Status=Scheduled + PaymentPlanStatus/ContractStatus=null', async ({

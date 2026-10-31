@@ -14,11 +14,11 @@ test.describe('Fluxo 2.5 — Clientes', () => {
   });
 
   test('@flow tela de listagem carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/clients/list');
+    await smokeRoute(authPage, '/app/clients/list', { ready: 'clients-list-page' });
   });
 
   test('@flow tela de criação carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/clients/new');
+    await smokeRoute(authPage, '/app/clients/new', { ready: 'client-form-page' });
   });
 
   test('@flow criar cliente via API + aparece na listagem', async ({ authApi }) => {

@@ -49,7 +49,7 @@ test.describe('Flow 3.4 — Skill catalog', () => {
   });
 
   test('@smoke skills settings page loads authenticated', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/settings/skills');
+    await smokeRoute(authPage, '/app/settings/skills', { ready: 'skills-list-page' });
     await expect(authPage.getByTestId('skills-inactive-hint')).toBeVisible();
   });
 

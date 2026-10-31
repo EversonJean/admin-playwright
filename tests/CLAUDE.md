@@ -9,14 +9,18 @@ Specs por área de negócio, numerados como os fluxos de `docs/fluxos/`: `tests/
 ```ts
 import { authTest as test, expect } from '../../fixtures/auth.fixture';   // ou tenantTest / twoTenantsTest / superAdminTest
 import { smokeRoute } from '../../helpers/smoke';
-import { apiCreateClient } from '../../helpers/api-entities';
+import { apiCompleteOnboarding, apiCreateClient } from '../../helpers/api-entities';
 
 /**
  * Fluxo: <N.M> — <nome>
  * Diagrama: docs/fluxos/negocio-<N.M>-<nome>.mmd
  */
 test.describe('Fluxo <N.M> — <nome>', () => {
-  test('@smoke tela carrega autenticada', async ({ authPage }) => { await smokeRoute(authPage, '/app/<rota>'); });
+  test.beforeEach(async ({ authApi }) => { await apiCompleteOnboarding(authApi); });   // tela do tenant: sem isto cai no assistente
+
+  test('@smoke tela carrega autenticada', async ({ authPage }) => {
+    await smokeRoute(authPage, '/app/<rota>', { ready: '<feature>-page' });   // data-testid da raiz do template
+  });
 
   test('@flow cria via API e aparece na listagem', async ({ authApi }) => { const c = await apiCreateClient(authApi); … });
 
@@ -53,6 +57,8 @@ test.describe('Fluxo <N.M> — <nome>', () => {
 - [ALERTA] **Tenant recém-criado cai no assistente de configuração.** O `onboardingGuard` do front (Etapa 109) redireciona para `/app/onboarding` a cada `page.goto` (o "uma vez por sessão" dele reinicia a cada carga de página), e o spec de UI espera um `data-testid` que nunca aparece. Regra: spec de UI do tenant chama `apiCompleteOnboarding(authApi)` no `beforeEach` (`1.3`, `2.x`, `3.1`) ou no teste, antes do primeiro `goto` (`7.x`).
 - [ALERTA] **Festa de hoje não nasce por orçamento.** A validade do orçamento fica entre hoje e a véspera da festa (o back mede pela data do tenant), e a véspera da festa de hoje já passou. Crie a festa no futuro e mova a data depois do aceite com `PATCH /api/events/{id}` (`apiPatchEvent`); o `setupAcceptedEvent` já faz isso sozinho quando a véspera cai antes da data UTC de hoje — o que, na sexta das 21:00 à meia-noite de Brasília, desloca também a festa de amanhã, por folga (o produto aceitaria).
 - [ALERTA] **Canal WhatsApp é por tenant, e o webhook do fake tem de dizer qual.** O back acha o tenant pelo `phone_number_id` do payload. Use o id que `seedWhatsappChannelDirect` devolve e passe-o em `fakeWhatsApp.triggerWebhook({ phoneNumberId })`. Com o `fake_phone` compartilhado, um spec em outro worker (ou a cópia de um `--repeat`) desligava o canal no meio do teste, e o webhook seguinte caía no tenant alheio com 200 (11.2.1, 2026-10-07). O `mode: 'serial'` só serializa dentro do arquivo.
+- [ALERTA] **`smokeRoute` sem `ready` passava antes de a tela abrir.** Checar URL e ausência de erro logo depois do `goto` roda antes dos guards: o redirect do `onboardingGuard` vinha depois e o teste passava ou caía pela velocidade (Etapa 244). O `ready` é obrigatório e é o `data-testid` da raiz do template (`<feature>-page`; criar no front se faltar); a URL é conferida depois dele, com a rota escapada e ancorada. Rodar a área com `run-tests.js e2e <specs> --repeat 2` pega a dependência de ordem e de banco sujo.
+- Asserção por texto contra a tela inteira casa com o nome do tenant de teste, que leva sufixo hex no topo ("Festinha 796403a6"): número solto no regex vai entre `\b` (o `403` do `smokeRoute` derrubou o 9.5 uma vez em quatro, Etapa 244).
 - `<mat-tab data-testid>` não chega ao cabeçalho renderizado: aba por `getByRole('tab', { name, exact: true })` (sem `exact`, "Equipe" casa "Roteiro da equipe").
 - Snackbar de erro aparece duas vezes por instantes: o `errorInterceptor` global notifica e a feature substitui pela mensagem do tradutor. Localize com `.last()`.
 

@@ -14,11 +14,11 @@ test.describe('Fluxo 2.1 — Atividades', () => {
   });
 
   test('@flow tela de listagem carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/activities/list');
+    await smokeRoute(authPage, '/app/activities/list', { ready: 'activities-list-page' });
   });
 
   test('@flow tela de criação carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/activities/new');
+    await smokeRoute(authPage, '/app/activities/new', { ready: 'activity-form-page' });
   });
 
   test('@flow criar atividade via API + aparece na listagem', async ({ authApi }) => {

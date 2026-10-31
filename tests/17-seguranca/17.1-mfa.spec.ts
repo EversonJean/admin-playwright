@@ -18,15 +18,15 @@ test.describe('Fluxo 17.1 — MFA', () => {
   });
 
   test('@flow tela de segurança carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/settings/security');
+    await smokeRoute(authPage, '/app/settings/security', { ready: 'security-page' });
   });
 
   test('@flow tela de setup MFA carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/settings/mfa');
+    await smokeRoute(authPage, '/app/settings/mfa', { ready: 'mfa-page' });
   });
 
   test('@flow tela de setup MFA wizard carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/settings/mfa/setup');
+    await smokeRoute(authPage, '/app/settings/mfa/setup', { ready: 'mfa-setup-page' });
   });
 
   test('@crud GET /api/auth/mfa/status em tenant novo retorna enrolled=false', async ({

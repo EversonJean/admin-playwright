@@ -1,5 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 import { assertOk, readJson } from '../../helpers/response';
 
 /**
@@ -8,8 +9,9 @@ import { assertOk, readJson } from '../../helpers/response';
  */
 
 test.describe('Fluxo 12.2 — Relatórios', () => {
-  test('@flow tela de relatórios financeiros carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/finance/reports');
+  test('@flow tela de relatórios financeiros carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/finance/reports', { ready: 'reports-page' });
   });
 
   test('@flow GET /api/reports/events com filtro de periodo responde 200', async ({ authApi }) => {

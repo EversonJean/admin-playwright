@@ -1,6 +1,7 @@
 import { expect } from '@playwright/test';
 import { authTest } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 
 /**
  * Settings residuais — link-google + endpoint negativo.
@@ -10,8 +11,9 @@ import { smokeRoute } from '../../helpers/smoke';
  */
 
 authTest.describe('Settings residuais (smoke)', () => {
-  authTest('@flow /app/settings/link-google carrega autenticado', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/settings/link-google');
+  authTest('@flow /app/settings/link-google carrega autenticado', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/settings/link-google', { ready: 'link-google-page' });
   });
 
   authTest('@flow POST /api/auth/link-google sem token devolve 4xx', async ({ authApi }) => {

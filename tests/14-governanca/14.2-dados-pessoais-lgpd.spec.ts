@@ -14,7 +14,7 @@ test.describe('Fluxo 14.2 — Dados pessoais (LGPD)', () => {
     // primeira navegação do Angular terminar o boot (/auth/me + /me/permissions).
     await apiCompleteOnboarding(authApi);
 
-    await smokeRoute(authPage, '/app/settings/privacy');
+    await smokeRoute(authPage, '/app/settings/privacy', { ready: 'privacy-page' });
     // A URL sozinha não prova a tela: o card do próprio usuário só aparece
     // com a página carregada.
     await expect(authPage.getByTestId('privacy-export-user-card')).toBeVisible();

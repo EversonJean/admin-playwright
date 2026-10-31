@@ -14,7 +14,7 @@ test.describe('Fluxo 6.2 — Detalhe do evento', () => {
   test('@flow listagem de eventos carrega autenticada', async ({ authPage, authApi }) => {
     // Tenant novo cai no onboardingGuard (Etapa 109) e o goto vira /app/onboarding.
     await apiCompleteOnboarding(authApi);
-    await smokeRoute(authPage, '/app/events/list');
+    await smokeRoute(authPage, '/app/events/list', { ready: 'events-list-page' });
   });
 
   test('@crud GET /api/events/:id devolve detalhes completos pos-aceite', async ({ authApi }) => {

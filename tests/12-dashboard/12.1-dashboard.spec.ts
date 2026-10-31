@@ -1,5 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 import { assertOk, readJson } from '../../helpers/response';
 
 /**
@@ -8,8 +9,9 @@ import { assertOk, readJson } from '../../helpers/response';
  */
 
 test.describe('Fluxo 12.1 — Dashboard', () => {
-  test('@flow dashboard carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/dashboard');
+  test('@flow dashboard carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/dashboard', { ready: 'dashboard' });
   });
 
   test('@flow GET /api/dashboard/metrics retorna estrutura em tenant novo', async ({

@@ -4,6 +4,7 @@ import {
   apiCreateActivity,
   apiCreateClient,
   apiCreateCollaborator,
+  apiCompleteOnboarding,
 } from '../../helpers/api-entities';
 import {
   apiAcceptPublicBudget,
@@ -25,8 +26,9 @@ import {
  */
 
 test.describe('Fluxo 7.2 — Confirmação do colaborador', () => {
-  test('@flow tela de calendário time-timeline carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/schedule/calendar');
+  test('@flow tela de calendário time-timeline carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/schedule/calendar', { ready: 'calendar-page' });
   });
 
   test('@crud confirm transiciona EventCollaborator de Invited -> Confirmed', async ({

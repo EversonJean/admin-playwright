@@ -67,17 +67,17 @@ test.describe('Fluxo 10.2 — Parcelas automáticas', () => {
   // as telas só abrem depois do `apiCompleteOnboarding`.
   test('@flow termos de pagamento carrega autenticada', async ({ authPage, authApi }) => {
     await apiCompleteOnboarding(authApi);
-    await smokeRoute(authPage, '/app/settings/payment-terms');
+    await smokeRoute(authPage, '/app/settings/payment-terms', { ready: 'payment-terms-list-page' });
   });
 
   test('@flow tela de recebíveis carrega autenticada', async ({ authPage, authApi }) => {
     await apiCompleteOnboarding(authApi);
-    await smokeRoute(authPage, '/app/finance/receivables');
+    await smokeRoute(authPage, '/app/finance/receivables', { ready: 'pending-payments-page' });
   });
 
   test('@flow tela /settings/payment-terms/new carrega autenticada', async ({ authPage, authApi }) => {
     await apiCompleteOnboarding(authApi);
-    await smokeRoute(authPage, '/app/settings/payment-terms/new');
+    await smokeRoute(authPage, '/app/settings/payment-terms/new', { ready: 'payment-terms-form-page' });
   });
 
   test('@crud cria PaymentTermsTemplate 50/50 + ativa', async ({ authApi }) => {

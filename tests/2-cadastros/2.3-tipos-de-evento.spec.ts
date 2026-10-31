@@ -14,11 +14,11 @@ test.describe('Fluxo 2.3 — Tipos de evento', () => {
   });
 
   test('@flow tela de listagem carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/settings/event-categories');
+    await smokeRoute(authPage, '/app/settings/event-categories', { ready: 'categories-list-page' });
   });
 
   test('@flow tela de criação carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/settings/event-categories/new');
+    await smokeRoute(authPage, '/app/settings/event-categories/new', { ready: 'category-form-page' });
   });
 
   test('@crud cria categoria via UI e valida no back', async ({ authPage, authApi }) => {

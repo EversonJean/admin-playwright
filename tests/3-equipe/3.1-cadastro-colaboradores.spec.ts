@@ -18,11 +18,11 @@ test.describe('Fluxo 3.1 — Cadastro de colaboradores', () => {
   });
 
   test('@flow tela de listagem carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/collaborators/list');
+    await smokeRoute(authPage, '/app/collaborators/list', { ready: 'collaborator-list-page' });
   });
 
   test('@flow tela de criação carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/collaborators/new');
+    await smokeRoute(authPage, '/app/collaborators/new', { ready: 'collaborator-form-page' });
   });
 
   test('@flow criar colaborador via API + aparece na listagem', async ({ authApi }) => {

@@ -1,5 +1,6 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
 import { smokeRoute } from '../../helpers/smoke';
+import { apiCompleteOnboarding } from '../../helpers/api-entities';
 import { assertOk, readJson } from '../../helpers/response';
 
 /**
@@ -19,8 +20,9 @@ const ORIGINAL_THEME = {
 };
 
 test.describe('Fluxo 16.5 — Personalização por tenant', () => {
-  test('@flow tela de tema carrega autenticada', async ({ authPage }) => {
-    await smokeRoute(authPage, '/app/settings/theme');
+  test('@flow tela de tema carrega autenticada', async ({ authPage, authApi }) => {
+    await apiCompleteOnboarding(authApi);
+    await smokeRoute(authPage, '/app/settings/theme', { ready: 'theme-page' });
   });
 
   test('@crud PUT /api/settings/theme persiste cores e LoginTitle', async ({ authApi }) => {

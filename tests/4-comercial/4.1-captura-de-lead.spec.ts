@@ -1,5 +1,4 @@
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
-import { smokeRoute } from '../../helpers/smoke';
 import { enableFeatureFlagDirect } from '../../helpers/db-helper';
 
 /**
