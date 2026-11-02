@@ -313,6 +313,8 @@ test.describe('Fluxo completo 11 — Evento comunitário (sem cobrança, com o c
 
     // §3 item 5 / front 3 — "Confirmar ação" sem enviar, e a tela cai no evento.
     await authPage.goto(`/app/budgets/${budget.id}`);
+    // A ausência só vale com a tela aberta; antes dela o toHaveCount(0) passa cedo.
+    await expect(authPage.getByTestId('budget-form-confirm-community')).toBeVisible();
     await expect(authPage.getByTestId('budget-form-accept'), 'comunitário não tem "Fechar orçamento"').toHaveCount(0);
     const confirmResponse = authPage.waitForResponse(
       (r) => r.request().method() === 'POST' && /\/api\/budgets\/[0-9a-f-]+\/confirm-community$/i.test(r.url()),
@@ -803,6 +805,9 @@ test.describe('Fluxo completo 11 — Evento comunitário (sem cobrança, com o c
     await expect(authPage.getByTestId('kpi-community-month'), 'sem o card comunitário').toHaveCount(0);
 
     await authPage.goto(`/app/finance/reports?chargeMode=Community&fromDate=${month.from}&toDate=${month.to}`);
+    // O relatório do mês passa dos 10 s padrão na suíte inteira (2026-11-02: 547/548,
+    // tela parada na barra de progresso); isolado abre em 3/3.
+    await expect(authPage.getByTestId('summary-community'), 'o relatório carrega').toBeVisible({ timeout: 30_000 });
     await expectMoney(authPage.getByTestId('summary-community-realCost'), myCost, 'KPI de investimento com reports.read');
   });
 
