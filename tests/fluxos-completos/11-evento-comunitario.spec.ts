@@ -1,21 +1,23 @@
-import { APIRequestContext, Page } from '@playwright/test';
+import { APIRequestContext, APIResponse, Locator, Page, Route } from '@playwright/test';
+
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
-import { twoTenantsTest } from '../../fixtures/two-tenants.fixture';
+import { createBearerApiContext, signupNewTenant } from '../../helpers/api-client';
 import {
   apiCompleteOnboarding,
   apiCreateActivity,
+  apiCreateClient,
   apiCreateCollaborator,
   apiCreateCollaboratorLevel,
-  apiCreateCommission,
   apiCreateEventCategory,
-  apiCreateEventExpense,
   apiCreateProduct,
-  apiTryCreateCommission,
 } from '../../helpers/api-entities';
 import {
   apiAssignCollaborator,
   apiCompleteEvent,
   apiConfirmCollaborator,
+  apiConfirmCommunityBudget,
+  apiCreateBudget,
+  apiGetBudget,
   apiGetPaymentPlan,
   apiGetPaymentSummary,
   apiListPendingPayments,
@@ -23,765 +25,795 @@ import {
   apiStartEvent,
   registerPaymentBody,
 } from '../../helpers/api-event-flow';
-import { parseCsv, readXlsxRows } from '../../helpers/binary-files';
-import {
-  LIVE_EVENT_STATUSES,
-  apiCreateSchoolClient,
-  apiEventReport,
-  apiExportEventReport,
-  apiFinancialDashboard,
-  apiGetBudgetView,
-  apiGetEventView,
-  apiGetProfitability,
-  brl,
-  monthRange,
-  setupCommunityEvent,
-  tenantToday,
-} from '../../helpers/community-event';
 import { enableFeatureFlagDirect } from '../../helpers/db-helper';
-import { fakeEmail } from '../../helpers/fake-providers';
-import { apiGetReadiness, tenantDayPlus } from '../../helpers/rain-plan';
-import { apiErrorCodes, assertOk } from '../../helpers/response';
-import { loginPortalCollaborator, openSessionPage, setupAcceptedEvent, setupPaidEvent } from '../../helpers/setup-flows';
-import { stripUiPermissions } from '../../helpers/ui';
+import { apiGetReadiness, setupConfirmedPortalCollaborator } from '../../helpers/rain-plan';
+import { apiErrorCodes, assertOk, readJson } from '../../helpers/response';
+import { loginAsRole, setupAcceptedEvent } from '../../helpers/setup-flows';
+import { isoDate, tenantToday } from '../../helpers/week-staffing';
 
 /**
- * Fluxo completo 11 — Evento comunitário: a ação sem cobrança, com o custo apurado
- * Plano: docs/implementados/PLANO-EVENTO-COMUNITARIO.md §3 (EC-A, Etapa 247),
- * §4 (EC-B, Etapa 248) e §5 (EC-C, Etapa 249). Registro e2e: E1, E5, E6, E12,
- * E13, E16, E17 e E18.
+ * Fluxo: fluxos-completos/11 — Evento comunitário: ação sem cobrança, com o custo apurado
+ * Diagrama: — (cenários E1, E5, E6, E10 e E12 do registro e2e de
+ * `docs/implementar/PLANO-EVENTO-COMUNITARIO.md`)
  *
- *   E1.  Orçamento para uma escola pela tela: a categoria do grupo "Comunitário"
- *        liga o modo; "Confirmar ação" sem envio; o evento nasce "Comunitário",
- *        sem parcelas e sem cobrança.
- *   E5.  "Sem cobrança"; pagamento e plano recusados; cachê de valor fixo aceito
- *        e no Portal do recreador.
- *   E12. Financeiro só com o valor de referência; ajustes e excedente recusados;
- *        "Cachê da equipe" sem percentual; prontidão sem "Sinal pago"; sem
- *        `eventpayments.read` o valor de referência continua.
- *   E13. Dinheiro de ponta a ponta: total zero por construção (§4 back 6).
- *   E6.  Custo da ação (equipe paga, despesa, material baixado) e o relatório do mês.
- *   E16. Sem `pricing.viewmargin`: sem "Custo da ação" e sem o card do painel;
- *        o KPI do relatório continua.
- *   E17. O card do painel e o relatório filtrado dão o mesmo número.
- *   E18. Relatório e export com pago e comunitário; isolamento entre tenants.
+ * Fonte do comportamento: PLANO-EVENTO-COMUNITARIO §2.3 (códigos e status),
+ * §3 (EC-A, modo comunitário e confirmação da ação), §4 (EC-B, guardas
+ * financeiras e cachê) e §5 (EC-C, custo da ação, relatório e painel). O spec
+ * afirma o plano; divergência é falha de código, não de asserção.
  *
- * Papel customizado (E12 sem `eventpayments.read`, E16 sem `pricing.viewmargin`):
- * os perfis são fixos e o mapa papel -> permissions é global no back; nenhum
- * perfil padrão lê eventos sem essas duas. A tela é vista com a permission
- * retirada da lista que o front recebe (`stripUiPermissions`, molde do 17.6).
- * A parte de API do E16 (403 no `profitability`, bloco `null` no painel) não tem
- * usuário real possível no e2e: fica no teste de Api do back.
- *
- * Sem diagrama `.mmd`: verificação de plano.
+ * [DECISAO] "Role customizada" não existe no produto: os papéis são o enum fixo
+ * e a matriz é código (`Permissions.ForRole`; `Domain/Auth/Role.cs`: "custom
+ * roles por tenant ficam pra futuro"). Nenhum papel do tenant tem
+ * `dashboard.read` e `reports.read` sem `pricing.viewmargin`. A TELA do E12
+ * recebe a lista de permissions sem `pricing.viewmargin` (molde do E62 do
+ * `17.6`); a parte do BACK com usuário real sem a permission fica em
+ * `test.fixme` com o motivo, e está coberta pelos testes de Api do back.
  */
 
-const FIN_STATUS_NOT_CHARGED = 'NotCharged';
+const DAY_MS = 86_400_000;
 
-/** A ação comunitária de hoje (o painel e o relatório contam o mês corrente). */
-function communityToday(api: APIRequestContext, opts: Parameters<typeof setupCommunityEvent>[1] = {}) {
-  return setupCommunityEvent(api, { ...opts, eventDate: tenantToday() });
+/** Dia do calendário do tenant (São Paulo) deslocado de `days`. */
+function tenantDay(days = 0): string {
+  return isoDate(new Date(tenantToday().getTime() + days * DAY_MS));
 }
 
-function sum(values: number[]): number {
-  return values.reduce((acc, v) => acc + v, 0);
+/** Primeiro e último dia do mês corrente do tenant. */
+function tenantMonth(): { from: string; to: string } {
+  const today = tenantToday();
+  const first = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+  const last = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0));
+  return { from: isoDate(first), to: isoDate(last) };
 }
 
-/** Decimal como o export CSV o escreve (`F2` pt-BR: vírgula, sem milhar). */
-function csvDecimal(value: number): string {
-  return value.toFixed(2).replace('.', ',');
+function uid(): string {
+  return Math.random().toString(36).slice(2, 8);
 }
 
-async function openEvent(page: Page, eventId: string): Promise<void> {
-  await page.goto(`/app/events/${eventId}`);
-  await expect(page.getByTestId('event-detail-title')).toBeVisible({ timeout: 20_000 });
+/** `R$ 1.234,56`, como o `currency: 'BRL'` do front em pt-BR. */
+function brl(value: number): string {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 }
 
-/** Inicia e conclui a ação (a conclusão baixa o material); exige o líder confirmado. */
-async function runAction(api: APIRequestContext, eventId: string): Promise<void> {
+/** Espaços normalizados (o pipe e o `Intl` usam espaço não separável). */
+function norm(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+/** O texto do elemento traz o valor em reais. */
+async function expectMoney(locator: Locator, value: number, message?: string): Promise<void> {
+  await expect(locator, message).toBeVisible();
+  await expect
+    .poll(async () => norm(await locator.innerText()), { message: message ?? `valor ${brl(value)}` })
+    .toContain(norm(brl(value)));
+}
+
+/** Aba do detalhe pelo rótulo (o `data-testid` do `<mat-tab>` não chega ao cabeçalho). */
+function tab(page: Page, name: string): Locator {
+  return page.getByRole('tab', { name, exact: true });
+}
+
+/**
+ * A tela recebe a lista de permissions do usuário SEM os códigos dados (molde
+ * do E62 do `17.6`): é o "usuário de role customizada" que a matriz fixa de
+ * papéis não oferece. O back continua decidindo pelo papel real.
+ */
+async function withoutPermissions(page: Page, codes: string[]): Promise<void> {
+  await page.route('**/api/me/permissions', async (route: Route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { data?: { permissions: string[] }; permissions?: string[] };
+    const holder = body.data ?? body;
+    holder.permissions = (holder.permissions ?? []).filter((p) => !codes.includes(p));
+    await route.fulfill({ response, json: body });
+  });
+}
+
+/** Orçamento comunitário (Draft) confirmado como ação pelo gestor, pela API. */
+async function setupCommunityAction(
+  api: APIRequestContext,
+  opts: {
+    clientId?: string;
+    activityIds?: string[];
+    eventDate?: string;
+    childrenCount?: number;
+    eventCategoryId?: string;
+  } = {},
+): Promise<{ budgetId: string; eventId: string; clientId: string }> {
+  const clientId = opts.clientId ?? (await apiCreateClient(api, { name: `Escola E2E ${uid()}` })).id;
+  const activityIds = opts.activityIds ?? [(await apiCreateActivity(api)).id];
+  const budget = await apiCreateBudget(api, {
+    clientId,
+    activityIds,
+    eventDate: opts.eventDate ?? tenantDay(10),
+    childrenCount: opts.childrenCount ?? 10,
+    chargeMode: 'Community',
+    ...(opts.eventCategoryId ? { eventCategoryId: opts.eventCategoryId } : {}),
+  });
+  const confirmed = await apiConfirmCommunityBudget(api, budget.id);
+  return { budgetId: budget.id, eventId: confirmed.anchorEventId, clientId };
+}
+
+interface EventDetail {
+  id: string;
+  chargeMode: string;
+  total: number;
+  subtotal: number;
+  childrenCount: number;
+}
+
+async function getEvent(api: APIRequestContext, eventId: string): Promise<EventDetail> {
+  const res = await api.get(`/api/events/${eventId}`);
+  await assertOk(res, 'GET /api/events/{id}');
+  return readJson<EventDetail>(res);
+}
+
+/** Líder escalado e confirmado, festa iniciada e concluída pela máquina de estados. */
+async function completeWithLeader(api: APIRequestContext, eventId: string, leaderId?: string): Promise<void> {
+  if (!leaderId) {
+    const leader = await apiCreateCollaborator(api);
+    await apiAssignCollaborator(api, eventId, leader.id, { isLeader: true });
+    await apiConfirmCollaborator(api, eventId, leader.id);
+  }
   await apiStartEvent(api, eventId);
   await apiCompleteEvent(api, eventId);
 }
 
-/** Recreador escalado como líder e confirmado. */
-async function assignLeader(api: APIRequestContext, eventId: string): Promise<string> {
-  const collaborator = await apiCreateCollaborator(api);
-  await apiAssignCollaborator(api, eventId, collaborator.id, { isLeader: true });
-  await apiConfirmCollaborator(api, eventId, collaborator.id);
-  return collaborator.id;
+async function postCommission(
+  api: APIRequestContext,
+  eventId: string,
+  body: { collaboratorId: string; kind: 'FixedAmount' | 'Percentage' | 'Bonus'; value: number; notes?: string },
+): Promise<APIResponse> {
+  return api.post(`/api/events/${eventId}/commissions`, {
+    data: { collaboratorId: body.collaboratorId, kind: body.kind, value: body.value, notes: body.notes ?? null },
+  });
 }
 
-test.describe('Fluxo 11 — community event', () => {
-  // ───────────────────────────── EC-A (Etapa 247) ─────────────────────────────
+async function addEventExpense(api: APIRequestContext, eventId: string, amount: number, category: string): Promise<void> {
+  await assertOk(
+    await api.post(`/api/events/${eventId}/expenses`, {
+      data: { amount, category, date: tenantDay(0), description: `${category} E2E` },
+    }),
+    'POST /api/events/{id}/expenses',
+  );
+}
 
-  // E1 — §3 front 1, 2 e 3; back 5.
-  test('E1 @crud the manager builds a community budget for a school (the Comunitário category turns the mode on) and confirms the action without sending; the event is born "Comunitário", without installments and without charge', async ({
-    authApi,
+interface CommunityCostLine {
+  category: string | number;
+  label: string;
+  estimated: number | null;
+  real: number;
+  isEstimate: boolean;
+}
+
+interface Profitability {
+  frozenMarginAmount: number | null;
+  frozenMarginPercent: number | null;
+  realMarginAmount: number | null;
+  realMarginPercent: number | null;
+  childrenVariance: number | null;
+  excessSuggestion: unknown | null;
+  communityCost: {
+    referenceValue: number;
+    estimatedCost: number | null;
+    realCost: number;
+    lines: CommunityCostLine[];
+    isPartial: boolean;
+  } | null;
+}
+
+async function getProfitability(api: APIRequestContext, eventId: string): Promise<Profitability> {
+  const res = await api.get(`/api/events/${eventId}/profitability`);
+  await assertOk(res, 'GET /api/events/{id}/profitability');
+  return readJson<Profitability>(res);
+}
+
+/** Linha do custo da ação pela categoria (o enum viaja como nome; o número fica de reserva). */
+function costLine(lines: CommunityCostLine[], name: 'Team' | 'Expenses' | 'Material' | 'Displacement' | 'Other'): CommunityCostLine {
+  const number = { Team: 1, Expenses: 2, Material: 3, Displacement: 4, Other: 5 }[name];
+  const line = lines.find((l) => l.category === name || l.category === number);
+  expect(line, `linha ${name} do custo da ação`).toBeTruthy();
+  return line!;
+}
+
+interface CommunitySummary {
+  count: number;
+  referenceValueTotal: number;
+  realCostTotal: number;
+}
+
+interface EventReport {
+  items: { items: Array<{ eventId: string; chargeMode: string; referenceValue: number | null; realCost: number | null; total: number }> };
+  summary: {
+    totalEvents: number;
+    averageTicket: number | null;
+    averageMarginPercent: number | null;
+    community: CommunitySummary | null;
+  };
+}
+
+async function getReport(
+  api: APIRequestContext,
+  query: { fromDate: string; toDate: string; chargeMode?: 'Charged' | 'Community' },
+): Promise<EventReport> {
+  const params = new URLSearchParams({ fromDate: query.fromDate, toDate: query.toDate, pageSize: '200' });
+  if (query.chargeMode) params.set('chargeMode', query.chargeMode);
+  const res = await api.get(`/api/reports/events?${params.toString()}`);
+  await assertOk(res, 'GET /api/reports/events');
+  return readJson<EventReport>(res);
+}
+
+async function getFinancialDashboard(api: APIRequestContext): Promise<{ communityThisMonth: CommunitySummary | null }> {
+  const res = await api.get('/api/dashboard/financial');
+  await assertOk(res, 'GET /api/dashboard/financial');
+  return readJson<{ communityThisMonth: CommunitySummary | null }>(res);
+}
+
+/** Uma linha de CSV (vírgula, aspas duplas com "" de escape), como o CsvHelper grava. */
+function parseCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quoted) {
+      if (ch === '"' && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else if (ch === '"') quoted = false;
+      else cur += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ',') {
+      out.push(cur);
+      cur = '';
+    } else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+
+test.describe('Fluxo completo 11 — Evento comunitário (sem cobrança, com o custo apurado)', () => {
+  test('E1 @flow "Nova ação comunitária" e a categoria do grupo Comunitário ligam o modo; "Confirmar ação" cria o evento sem parcelas, com o chip e nos filtros da lista e do calendário', async ({
     authPage,
+    authApi,
   }) => {
-    test.setTimeout(180_000);
+    test.setTimeout(240_000);
     await apiCompleteOnboarding(authApi);
-    const school = await apiCreateSchoolClient(authApi);
-    const activity = await apiCreateActivity(authApi, { status: 'Active' });
-    const category = await apiCreateEventCategory(authApi, 'Comunitario');
+    const category = await apiCreateEventCategory(authApi, { group: 'Comunitario', name: `Escola pública E2E ${uid()}` });
+    const toggle = authPage.getByTestId('budget-form-isCommunity').getByRole('switch');
 
+    // §3 front 4 — o atalho da lista de eventos abre o orçamento já no modo.
+    await authPage.goto('/app/events/list');
+    await authPage.getByTestId('events-list-new-community').click();
+    await authPage.waitForURL(/\/app\/budgets\/quick\?community=1/);
+    await expect(toggle, 'atalho: toggle ligado').toHaveAttribute('aria-checked', 'true');
+    await expect(authPage.getByTestId('budget-form-community-hint')).toBeVisible();
+
+    // §3 front 2 — orçamento montado sem o atalho: a categoria do grupo
+    // Comunitário liga o toggle, com o aviso.
     await authPage.goto('/app/budgets/quick');
-    await expect(authPage.getByTestId('budget-form-clientId')).toBeVisible({ timeout: 20_000 });
-    await authPage.getByTestId('budget-form-clientId').click();
-    await authPage.getByRole('option', { name: school.name }).click();
-    await authPage.getByTestId('budget-form-eventDate').fill(tenantDayPlus(30));
-    await authPage.getByTestId('budget-form-eventStartTime').fill('09:00');
-    await authPage.getByTestId('budget-form-eventEndTime').fill('12:00');
-    await authPage.getByTestId('budget-form-childrenCount').fill('25');
-    await authPage.getByTestId('budget-form-eventLocation').fill(`Pátio da ${school.name}`);
-    await authPage.getByTestId('budget-form-add-item').click();
-    await authPage.getByTestId('budget-form-item-activity-0').click();
-    await authPage.getByRole('option', { name: activity.name }).click();
-
-    // A categoria do grupo "Comunitário" liga o modo, uma vez, com o aviso.
+    await expect(toggle, 'orçamento novo nasce cobrado').toHaveAttribute('aria-checked', 'false');
     await authPage.getByTestId('budget-form-eventCategoryId').click();
     await authPage.getByTestId(`budget-form-category-option-${category.id}`).click();
-    await expect(authPage.getByTestId('budget-form-isCommunity').getByRole('switch')).toHaveAttribute(
-      'aria-checked',
-      'true',
-    );
+    await expect(toggle, 'categoria comunitária liga o modo').toHaveAttribute('aria-checked', 'true');
     await expect(authPage.getByTestId('budget-form-community-suggested')).toContainText('Sugerido pela categoria');
-    // Ligado: sem desconto nem forma de pagamento; o resumo é "valor de referência · cobrado R$ 0,00".
-    await expect(authPage.getByTestId('budget-form-discountKind')).toHaveCount(0);
-    await expect(authPage.getByTestId('budget-form-payment-terms')).toHaveCount(0);
-    await expect(authPage.getByTestId('budget-summary-reference-value')).toBeVisible();
-    await expect(authPage.getByTestId('budget-summary-total')).toContainText(brl(0), { timeout: 15_000 });
 
-    const created = authPage.waitForResponse(
-      (r) => r.request().method() === 'POST' && /\/api\/budgets$/.test(new URL(r.url()).pathname),
+    // Pré-condição: um evento PAGO, controle dos filtros, e o orçamento
+    // comunitário da escola em rascunho.
+    const paid = await setupAcceptedEvent(authApi);
+    const school = await apiCreateClient(authApi, { name: `Escola Municipal E2E ${uid()}` });
+    const activity = await apiCreateActivity(authApi);
+    const budget = await apiCreateBudget(authApi, {
+      clientId: school.id,
+      activityIds: [activity.id],
+      eventDate: tenantDay(3),
+      chargeMode: 'Community',
+      eventCategoryId: category.id,
+    });
+
+    // §3 item 5 / front 3 — "Confirmar ação" sem enviar, e a tela cai no evento.
+    await authPage.goto(`/app/budgets/${budget.id}`);
+    await expect(authPage.getByTestId('budget-form-accept'), 'comunitário não tem "Fechar orçamento"').toHaveCount(0);
+    const confirmResponse = authPage.waitForResponse(
+      (r) => r.request().method() === 'POST' && /\/api\/budgets\/[0-9a-f-]+\/confirm-community$/i.test(r.url()),
     );
-    await authPage.getByTestId('budget-form-save').click();
-    const createdRes = await created;
-    expect(createdRes.ok(), 'o rascunho foi gravado').toBe(true);
-    const budgetId = ((await createdRes.json()) as { data: { id: string } }).data.id;
-
-    const budget = await apiGetBudgetView(authApi, budgetId);
-    expect(budget.chargeMode).toBe('Community');
-    expect(budget.status).toBe('Draft');
-    expect(budget.subtotal, 'valor de referência').toBeGreaterThan(0);
-    expect(budget.discountApplied).toBeCloseTo(budget.subtotal, 2);
-    expect(budget.total).toBe(0);
-
-    // Detalhe do orçamento comunitário: "Confirmar ação", e não "Fechar orçamento".
-    await authPage.goto(`/app/budgets/${budgetId}`);
-    await expect(authPage.getByTestId('budget-form-confirm-community')).toBeVisible({ timeout: 20_000 });
-    await expect(authPage.getByTestId('budget-form-accept')).toHaveCount(0);
-    await expect(authPage.getByTestId('budget-summary-reference-value')).toContainText(brl(budget.subtotal));
     await authPage.getByTestId('budget-form-confirm-community').click();
-    await authPage.getByTestId('confirm-ok').click();
-    await authPage.waitForURL(/\/app\/events\/[0-9a-f-]+(\?|$)/i, { timeout: 20_000 });
-    const eventId = /\/app\/events\/([0-9a-f-]+)/i.exec(authPage.url())![1]!;
+    await authPage.getByTestId('confirm-community-confirm').click();
+    const confirmed = await confirmResponse;
+    expect(confirmed.ok(), 'confirm-community').toBe(true);
+    const eventId = ((await confirmed.json()) as { data?: { anchorEventId?: string } }).data?.anchorEventId;
+    expect(eventId, 'a confirmação devolve o evento').toBeTruthy();
+    await authPage.waitForURL(new RegExp(`/app/events/${eventId}`));
+    await expect(authPage.getByTestId('event-detail-community')).toHaveText(/Comunitário/);
 
-    await expect(authPage.getByTestId('event-detail-community')).toContainText('Comunitário', { timeout: 20_000 });
-
-    const ev = await apiGetEventView(authApi, eventId);
-    expect(ev.chargeMode).toBe('Community');
-    expect(ev.total).toBe(0);
-    expect(ev.subtotal, 'o evento guarda o valor de referência').toBeCloseTo(budget.subtotal, 2);
-    expect((await apiGetBudgetView(authApi, budgetId)).status).toBe('Accepted');
+    // O orçamento virou ação confirmada sem passar por "Enviado".
+    const after = (await apiGetBudget(authApi, budget.id)) as unknown as { status: string; chargeMode: string };
+    expect(after.status).toBe('Accepted');
+    expect(after.chargeMode).toBe('Community');
 
     // Sem parcelas e sem cobrança agendada.
-    expect(await apiGetPaymentPlan(authApi, eventId), 'sem plano de parcelas').toBeNull();
+    const ev = await getEvent(authApi, eventId!);
+    expect(ev.chargeMode).toBe('Community');
+    expect(ev.total, 'total do evento comunitário').toBe(0);
+    expect(await apiGetPaymentPlan(authApi, eventId!), 'evento comunitário nasce sem plano').toBeNull();
+    const summary = await apiGetPaymentSummary(authApi, eventId!);
+    expect(summary.financialStatus).toBe('NotCharged');
     const pending = await apiListPendingPayments(authApi, { clientId: school.id });
-    expect(pending.items.map((p) => p.eventId)).not.toContain(eventId);
+    expect(pending.items.map((p) => p.eventId), 'nada a receber da escola').not.toContain(eventId);
 
-    // Confirmada sem envio: nada chegou à escola.
-    expect(await fakeEmail.emails({ to: school.email }), 'nenhum e-mail ao cliente').toHaveLength(0);
+    // §3 item 8 / front 4 — filtro "Cobrança: comunitários" na lista de eventos.
+    await authPage.goto('/app/events/list');
+    await expect(authPage.getByTestId(`events-list-detail-${paid.eventId}`), 'sem filtro, o pago aparece').toBeVisible();
+    await expect(authPage.getByTestId(`events-list-community-${eventId}`), 'chip na linha').toBeVisible();
+    await authPage.getByTestId('events-list-filter-chargeMode').click();
+    await authPage.getByRole('option', { name: 'Comunitários', exact: true }).click();
+    await expect(authPage.getByTestId(`events-list-community-${eventId}`)).toBeVisible();
+    await expect(authPage.getByTestId(`events-list-detail-${paid.eventId}`), 'o filtro tira o pago').toHaveCount(0);
+
+    // E no calendário: a API filtra por `chargeMode` e a tela recorta.
+    const calendar = await authApi.get(
+      `/api/events/calendar?from=${tenantDay(-1)}&to=${tenantDay(45)}&chargeMode=Community`,
+    );
+    await assertOk(calendar, 'GET /api/events/calendar?chargeMode=Community');
+    const calendarIds = (await readJson<Array<{ id: string }>>(calendar)).map((e) => e.id);
+    expect(calendarIds).toContain(eventId);
+    expect(calendarIds).not.toContain(paid.eventId);
+
+    await authPage.goto('/app/schedule/calendar');
+    await authPage.getByTestId('calendar-filter-chargeMode').click();
+    await authPage.getByRole('option', { name: 'Comunitários', exact: true }).click();
+    await expect(authPage.getByTestId(`calendar-upcoming-community-${eventId}`)).toBeVisible();
   });
 
-  // ───────────────────────────── EC-B (Etapa 248) ─────────────────────────────
-
-  // E5 — §4 back 1, 3 e 4; front 2.
-  test('E5 @flow a community event shows "Sem cobrança"; payment and payment plan are refused; a fixed fee for the recreator is accepted and shows in his Portal', async ({
-    authApi,
+  test('E5 @flow aba Financeiro com valor de referência e "Sem cobrança"; pagamento e plano dão 409 Event.NotChargeable ao Dono e ao Financeiro; cachê fixo aceito e no Portal do recreador, percentual desabilitado', async ({
     authPage,
-    browser,
+    authApi,
     tenant,
   }) => {
-    test.setTimeout(180_000);
-    const action = await setupCommunityEvent(authApi);
-
+    test.setTimeout(240_000);
     await apiCompleteOnboarding(authApi);
-    await openEvent(authPage, action.eventId);
-    await expect(authPage.getByTestId('event-detail-financial-not-charged')).toHaveText(/Sem cobrança/);
-    await expect(authPage.getByTestId('event-detail-payment-plan-status')).toHaveCount(0);
-    expect((await apiGetPaymentSummary(authApi, action.eventId)).financialStatus).toBe(FIN_STATUS_NOT_CHARGED);
+    const { eventId } = await setupCommunityAction(authApi);
+    const ev = await getEvent(authApi, eventId);
+    expect(ev.subtotal, 'valor de referência do evento').toBeGreaterThan(0);
 
-    const payment = await authApi.post(`/api/events/${action.eventId}/payments`, {
-      data: registerPaymentBody({ amount: 100, method: 'Pix' }),
-    });
-    expect(payment.status(), 'registrar pagamento').toBe(409);
-    expect(await apiErrorCodes(payment)).toContain('Event.NotChargeable');
-
-    const plan = await authApi.post(`/api/events/${action.eventId}/payment-plan`, {
-      data: {
-        templateId: null,
-        installments: [{ order: 1, label: 'Parcela única', expectedAmount: 100, dueDate: tenantDayPlus(5) }],
-      },
-    });
-    expect(plan.status(), 'criar plano').toBe(409);
-    expect(await apiErrorCodes(plan)).toContain('Event.NotChargeable');
-
-    expect(await apiGetPaymentPlan(authApi, action.eventId)).toBeNull();
-    expect((await apiGetPaymentSummary(authApi, action.eventId)).entries).toHaveLength(0);
-
-    // O cachê do recreador: valor fixo, como em qualquer festa.
-    const recreatorId = await assignLeader(authApi, action.eventId);
-    const fee = await apiCreateCommission(authApi, action.eventId, {
-      collaboratorId: recreatorId,
-      kind: 'FixedAmount',
-      value: 180,
-      notes: 'Cachê da ação na escola',
-    });
-
-    const portal = await loginPortalCollaborator(tenant.tenantId, recreatorId);
+    // §4 back 1 e §2.3 — as portas de cobrança recusam com 409, não 403.
+    const due = tenantDay(20);
+    const financial = await loginAsRole(tenant.tenantId, 'Financial');
     try {
-      const res = await portal.api.get('/api/portal/my-commissions');
-      await assertOk(res, 'GET /api/portal/my-commissions');
-      const mine = ((await res.json()) as { data: { commissions: Array<{ id: string; eventId: string; amount: number }> } })
-        .data.commissions;
-      const line = mine.find((c) => c.id === fee.id);
-      expect(line, 'o cachê aparece no Portal do recreador').toBeTruthy();
-      expect(line!.eventId).toBe(action.eventId);
-      expect(line!.amount).toBe(180);
+      for (const [who, api] of [['Dono', authApi], ['Financeiro', financial.api]] as const) {
+        const pay = await api.post(`/api/events/${eventId}/payments`, {
+          data: registerPaymentBody({ amount: 100, method: 'Pix' }),
+        });
+        expect(pay.status(), `${who}: registrar pagamento`).toBe(409);
+        expect(await apiErrorCodes(pay)).toContain('Event.NotChargeable');
 
-      const view = await openSessionPage(browser, portal.tokens);
-      try {
-        await view.page.goto('/portal/my-commissions');
-        // A tela abre no mês corrente e a ação nasce daqui a 10 dias
-        // (`setupCommunityEvent`): nos últimos dias do mês ela cai no seguinte.
-        // O período cobre os dois meses.
-        await view.page.getByTestId('my-commissions-filter-from').fill(monthRange(tenantToday()).from);
-        await view.page.getByTestId('my-commissions-filter-to').fill(monthRange(tenantDayPlus(10)).to);
-        await view.page.getByTestId('my-commissions-filter-btn').click();
-        const item = view.page.getByTestId(`my-commissions-item-${fee.id}`);
-        await expect(item).toBeVisible({ timeout: 20_000 });
-        await expect(item).toContainText(brl(180));
-      } finally {
-        await view.context.close();
+        const plan = await api.post(`/api/events/${eventId}/payment-plan`, {
+          data: {
+            templateId: null,
+            installments: [{ order: 1, label: 'Parcela única', expectedAmount: 100, dueDate: due }],
+          },
+        });
+        expect(plan.status(), `${who}: criar plano`).toBe(409);
+        expect(await apiErrorCodes(plan)).toContain('Event.NotChargeable');
       }
+    } finally {
+      await financial.api.dispose();
+    }
+    expect((await apiGetPaymentSummary(authApi, eventId)).financialStatus).toBe('NotCharged');
+    expect(await apiGetPaymentPlan(authApi, eventId)).toBeNull();
+
+    // O recreador do Portal, escalado e confirmado.
+    const recreatorName = `Recreador E2E ${uid()}`;
+    const { collaboratorId, portal } = await setupConfirmedPortalCollaborator(authApi, tenant.tenantId, eventId, {
+      name: recreatorName,
+    });
+    try {
+      // §4 front 1 e 2 — aba Financeiro: card do comunitário, sem plano,
+      // pagamento nem ajuste; o cabeçalho não diz "Sem plano financeiro".
+      await authPage.goto(`/app/events/${eventId}`);
+      await expect(authPage.getByTestId('event-detail-community')).toBeVisible();
+      await expect(authPage.getByTestId('event-detail-payment-plan-status')).toHaveCount(0);
+      await expect(authPage.getByText('Sem plano financeiro')).toHaveCount(0);
+
+      await tab(authPage, 'Financeiro').click();
+      await expect(authPage.getByTestId('event-detail-community-finance')).toContainText('sem cobrança');
+      await expectMoney(authPage.getByTestId('event-detail-community-reference'), ev.subtotal, 'valor de referência');
+      await expect(authPage.getByTestId('event-detail-payments-status')).toHaveText(/Sem cobrança/);
+      await expect(authPage.getByTestId('event-detail-payment-plan')).toHaveCount(0);
+      await expect(authPage.getByTestId('event-detail-payments')).toHaveCount(0);
+      await expect(authPage.getByTestId('event-detail-adjustments')).toHaveCount(0);
+      await expect(authPage.getByTestId('setup-pain-hint')).toHaveCount(0);
+
+      // §4 front 3 — aba "Cachê da equipe": percentual desabilitado; o valor
+      // fixo é aceito.
+      await tab(authPage, 'Cachê da equipe').click();
+      await authPage.getByTestId('commission-tab-btn-new').click();
+      await authPage.getByTestId('commission-tab-form-collaborator').click();
+      await authPage.getByRole('option', { name: recreatorName }).click();
+      await authPage.getByTestId('commission-tab-form-kind').click();
+      await expect(authPage.getByTestId('commission-tab-form-kind-percentage')).toHaveAttribute('aria-disabled', 'true');
+      await authPage.getByRole('option', { name: 'Valor fixo (R$)' }).click();
+      await expect(authPage.getByTestId('commission-tab-form-community-hint')).toContainText('Sem receita');
+      await authPage.getByTestId('commission-tab-form-value').fill('180');
+      const created = authPage.waitForResponse(
+        (r) => r.request().method() === 'POST' && /\/api\/events\/[0-9a-f-]+\/commissions$/i.test(r.url()),
+      );
+      await authPage.getByTestId('commission-tab-form-submit').click();
+      const createdRes = await created;
+      expect(createdRes.ok(), 'cachê fixo aceito').toBe(true);
+      await expect(authPage.getByTestId('commission-tab-table')).toContainText(recreatorName);
+
+      // §2.3 — o percentual é recusado pelo back (a tela só o desabilita).
+      const percentage = await postCommission(authApi, eventId, { collaboratorId, kind: 'Percentage', value: 10 });
+      expect(percentage.status(), 'comissão percentual em evento comunitário').toBe(400);
+      expect(await apiErrorCodes(percentage)).toContain('Commission.PercentageOnCommunityEvent');
+
+      // E o cachê aparece no Portal do recreador.
+      const mine = await portal.api.get(`/api/portal/my-commissions?from=${tenantDay(-1)}&to=${tenantDay(60)}`);
+      await assertOk(mine, 'GET /api/portal/my-commissions');
+      const commissions = (await readJson<{ commissions: Array<{ eventId: string; kind: string; amount: number }> }>(mine))
+        .commissions;
+      const cache = commissions.find((c) => c.eventId === eventId);
+      expect(cache, 'o cachê da ação no Portal do recreador').toBeTruthy();
+      expect(cache!.kind).toBe('FixedAmount');
+      expect(cache!.amount).toBe(180);
     } finally {
       await portal.api.dispose();
     }
   });
 
-  // E12 — §4 back 1, 4 e 5; front 1, 3 e 4.
-  test('E12 @flow the Financeiro tab shows only the reference value; every financial adjustment and the excess charge are refused; the "Cachê da equipe" tab offers no percentage and the API refuses it; readiness has no "Sinal pago"', async ({
-    authApi,
+  test('E10 @flow item novo, item editado e excedente de crianças: total segue zero, sem card de excedente, "cobrar excedente" 409 e nenhum plano; a prontidão não pede sinal', async ({
     authPage,
-  }) => {
-    test.setTimeout(180_000);
-    const action = await setupCommunityEvent(authApi);
-    const recreatorId = await assignLeader(authApi, action.eventId);
-
-    await apiCompleteOnboarding(authApi);
-    await openEvent(authPage, action.eventId);
-    await authPage.getByRole('tab', { name: 'Financeiro', exact: true }).click();
-    await expect(authPage.getByTestId('event-detail-community-finance')).toContainText(
-      'Evento comunitário: sem cobrança.',
-    );
-    await expect(authPage.getByTestId('event-detail-community-reference')).toContainText(brl(action.referenceValue));
-    for (const absent of [
-      'event-detail-payment-plan',
-      'event-detail-no-payment-plan',
-      'event-detail-payments',
-      'event-detail-payments-register',
-      'event-detail-adjustments',
-    ]) {
-      await expect(authPage.getByTestId(absent), `${absent} some no comunitário`).toHaveCount(0);
-    }
-
-    // As portas de cobrança, chamadas direto: todas "sem cobrança".
-    const anyId = '00000000-0000-0000-0000-000000000001';
-    const adjustments: Array<[string, Record<string, unknown>]> = [
-      ['reversal', { paymentEntryId: anyId, reason: 'Estorno E2E', notes: null }],
-      ['refund', { installmentId: anyId, amount: 10, reason: 'Reembolso E2E', notes: null }],
-      ['discount', { installmentId: anyId, amount: 10, reason: 'Desconto E2E', notes: null }],
-      ['writeoff', { installmentId: anyId, reason: 'Baixa E2E', notes: null }],
-      ['credit', { installmentId: anyId, amount: 10, reason: 'Crédito E2E', notes: null, expiresAt: null }],
-      ['increase', { installmentId: anyId, amount: 10, reason: 'Acréscimo E2E', notes: null }],
-      [
-        'renegotiation',
-        {
-          installmentId: anyId,
-          reason: 'Renegociação E2E',
-          notes: null,
-          newInstallments: [{ order: 1, label: 'Nova', expectedAmount: 10, dueDate: tenantDayPlus(5) }],
-        },
-      ],
-    ];
-    for (const [kind, body] of adjustments) {
-      const res = await authApi.post(`/api/events/${action.eventId}/financial-adjustments/${kind}`, { data: body });
-      expect(res.status(), `ajuste ${kind}`).toBe(409);
-      expect(await apiErrorCodes(res), `ajuste ${kind}`).toContain('Event.NotChargeable');
-    }
-    const excess = await authApi.post(`/api/events/${action.eventId}/excess-charge`, {
-      data: { confirmed: true, notes: null },
-    });
-    expect(excess.status(), 'cobrança de excedente').toBe(409);
-    expect(await apiErrorCodes(excess)).toContain('Event.NotChargeable');
-
-    // "Cachê da equipe": percentual desabilitado na tela e recusado na API.
-    await expect(authPage.getByRole('tab', { name: 'Comissões', exact: true })).toHaveCount(0);
-    await authPage.getByRole('tab', { name: 'Cachê da equipe', exact: true }).click();
-    await authPage.getByTestId('commission-tab-btn-new').click();
-    await expect(authPage.getByTestId('commission-tab-form-kind-community-hint')).toContainText(
-      'Sem receita: use valor fixo',
-    );
-    await authPage.getByTestId('commission-tab-form-kind').click();
-    await expect(authPage.getByTestId('commission-tab-form-kind-percentage')).toHaveAttribute('aria-disabled', 'true');
-    await authPage.keyboard.press('Escape');
-
-    const percentage = await apiTryCreateCommission(authApi, action.eventId, {
-      collaboratorId: recreatorId,
-      kind: 'Percentage',
-      value: 10,
-    });
-    expect(percentage.status(), 'comissão percentual ao criar').toBeGreaterThanOrEqual(400);
-    expect(percentage.status()).toBeLessThan(500);
-    expect(await apiErrorCodes(percentage)).toContain('Commission.PercentageOnCommunityEvent');
-
-    const fixed = await apiCreateCommission(authApi, action.eventId, {
-      collaboratorId: recreatorId,
-      kind: 'FixedAmount',
-      value: 150,
-    });
-    const toPercentage = await authApi.put(`/api/events/${action.eventId}/commissions/${fixed.id}`, {
-      data: { kind: 'Percentage', value: 10, notes: null },
-    });
-    expect(toPercentage.status(), 'editar para percentual').toBeGreaterThanOrEqual(400);
-    expect(toPercentage.status()).toBeLessThan(500);
-    expect(await apiErrorCodes(toPercentage)).toContain('Commission.PercentageOnCommunityEvent');
-
-    // Prontidão sem "Sinal pago"; o pago continua com ele (controle).
-    const readiness = await apiGetReadiness(authApi, action.eventId);
-    expect(readiness.map((r) => r.key)).not.toContain('deposit_paid');
-    expect(readiness.map((r) => r.key), 'o contrato continua valendo').toContain('contract_formalized');
-    const paid = await setupAcceptedEvent(authApi);
-    expect((await apiGetReadiness(authApi, paid.eventId)).map((r) => r.key)).toContain('deposit_paid');
-  });
-
-  // E12 — §4 front 1 (o card não depende de `eventpayments.read`).
-  test('E12 @flow without eventpayments.read the Financeiro tab still shows the reference value', async ({
-    authApi,
-    authPage,
-  }) => {
-    const action = await setupCommunityEvent(authApi);
-
-    await apiCompleteOnboarding(authApi);
-    await stripUiPermissions(authPage, ['eventpayments.read']);
-    await openEvent(authPage, action.eventId);
-    await authPage.getByRole('tab', { name: 'Financeiro', exact: true }).click();
-    await expect(authPage.getByTestId('event-detail-community-reference')).toContainText(brl(action.referenceValue));
-    // O chip do resumo de pagamentos é o único que depende da permission.
-    await expect(authPage.getByTestId('event-detail-payments-status')).toHaveCount(0);
-    await expect(authPage.getByTestId('event-detail-financial-not-charged')).toHaveText(/Sem cobrança/);
-  });
-
-  // E13 — §4 back 6.
-  test('E13 @flow money end to end: the confirmed community event has zero item sum and the reference price; adding an item with a surcharge, lowering the children count and repricing keep the total at zero; the event never enters "A receber"', async ({
     authApi,
   }) => {
-    test.setTimeout(180_000);
-    const action = await setupCommunityEvent(authApi, { budget: { childrenCount: 20 } });
-    const budget = await apiGetBudgetView(authApi, action.budgetId);
+    test.setTimeout(240_000);
+    await apiCompleteOnboarding(authApi);
+    const { eventId } = await setupCommunityAction(authApi, { childrenCount: 10 });
+    expect((await getEvent(authApi, eventId)).total).toBe(0);
 
-    const itemsTotal = (ev: Awaited<ReturnType<typeof apiGetEventView>>) => sum(ev.pricingItems.map((i) => i.totalPrice));
-
-    let ev = await apiGetEventView(authApi, action.eventId);
-    expect(ev.chargeMode).toBe('Community');
-    expect(ev.subtotal, 'o preço de referência vem do orçamento').toBeCloseTo(budget.subtotal, 2);
-    expect(ev.total).toBe(0);
-    expect(ev.pricingItems.length).toBeGreaterThan(0);
-    expect(itemsTotal(ev), 'Σ itens = 0').toBeCloseTo(0, 2);
-    for (const item of ev.pricingItems) expect(item.unitPrice, `${item.description}: preço de tabela`).toBeGreaterThan(0);
-
-    // A linha com acréscimo. O orçamento não recebe acréscimo por linha
-    // (`BudgetPricingItemInputDto` é atividade + quantidade): o acréscimo entra
-    // no item do evento, que é o caminho do `AdditionalAmount`.
-    const added = await authApi.post(`/api/events/${action.eventId}/pricing-items`, {
+    // §4 back 6 — item novo: o domínio aplica o desconto do modo e o total fica zero.
+    const added = await authApi.post(`/api/events/${eventId}/pricing-items`, {
       data: {
         sourceType: 'Custom',
         sourceId: null,
-        description: 'Pipoca para a turma',
-        quantity: 2,
+        description: 'Pintura facial E2E',
+        quantity: 1,
         unit: 'un',
-        unitPrice: 50,
+        unitPrice: 150,
         discountAmount: 0,
-        additionalAmount: 30,
+        additionalAmount: 0,
         notes: null,
       },
     });
-    await assertOk(added, 'POST /api/events/{id}/pricing-items');
-    ev = await apiGetEventView(authApi, action.eventId);
-    const popcorn = ev.pricingItems.find((i) => i.description === 'Pipoca para a turma');
-    expect(popcorn, 'o item adicionado').toBeTruthy();
-    expect(popcorn!.unitPrice, 'preço de referência preservado').toBe(50);
-    expect(popcorn!.totalPrice, 'o acréscimo também não é cobrado').toBe(0);
-    expect(ev.total).toBe(0);
-    expect(itemsTotal(ev)).toBeCloseTo(0, 2);
+    await assertOk(added, 'POST pricing item');
+    const addedId = (await readJson<{ id: string }>(added)).id;
+    expect((await getEvent(authApi, eventId)).total, 'total depois do item novo').toBe(0);
 
-    // Menos crianças e o novo aceite (reprecificar).
-    await apiPatchEvent(authApi, action.eventId, { childrenCount: 12 });
-    ev = await apiGetEventView(authApi, action.eventId);
-    expect(ev.childrenCount).toBe(12);
-    expect(ev.total).toBe(0);
-    const reprice = await authApi.post(`/api/events/${action.eventId}/reprice`, {
-      data: { clientAcceptanceConfirmed: true, notes: null },
+    interface PricingItem {
+      id: string;
+      sourceType: string;
+      sourceId: string | null;
+      description: string;
+      quantity: number;
+      unit: string | null;
+      unitPrice: number;
+      discountAmount: number;
+      additionalAmount: number;
+      totalPrice: number;
+      notes: string | null;
+    }
+    const listItems = async (): Promise<PricingItem[]> => {
+      const res = await authApi.get(`/api/events/${eventId}/pricing-items`);
+      await assertOk(res, 'GET pricing items');
+      const data = await readJson<PricingItem[] | { items: PricingItem[] }>(res);
+      return Array.isArray(data) ? data : data.items;
+    };
+    const item = (await listItems()).find((i) => i.id === addedId)!;
+    expect(item.unitPrice, 'o preço de tabela fica como referência').toBe(150);
+    expect(item.totalPrice).toBe(0);
+
+    // Item editado com o desconto que a tela devolve (o PUT manda o item como veio).
+    const edited = await authApi.put(`/api/events/${eventId}/pricing-items/${addedId}`, {
+      data: {
+        sourceType: item.sourceType,
+        sourceId: item.sourceId,
+        description: item.description,
+        quantity: 2,
+        unit: item.unit,
+        unitPrice: item.unitPrice,
+        discountAmount: item.discountAmount,
+        additionalAmount: item.additionalAmount,
+        notes: item.notes,
+      },
     });
-    await assertOk(reprice, 'POST /api/events/{id}/reprice');
-    ev = await apiGetEventView(authApi, action.eventId);
-    expect(ev.total, 'reprecificar mantém o total zero').toBe(0);
-    expect(itemsTotal(ev)).toBeCloseTo(0, 2);
-    expect(ev.pricingItems.find((i) => i.description === 'Pipoca para a turma')?.unitPrice).toBe(50);
-    expect(ev.subtotal, 'o valor de referência é agregado congelado (§4 back 6)').toBeCloseTo(budget.subtotal, 2);
+    await assertOk(edited, 'PUT pricing item');
+    expect((await getEvent(authApi, eventId)).total, 'total depois do item editado').toBe(0);
+    const editedItem = (await listItems()).find((i) => i.id === addedId)!;
+    expect(editedItem.unitPrice).toBe(150);
+    expect(editedItem.totalPrice).toBe(0);
+    for (const i of await listItems()) expect(i.totalPrice, `linha ${i.description}`).toBe(0);
+    expect(await apiGetPaymentPlan(authApi, eventId)).toBeNull();
 
-    // Fora do "A receber".
-    const pending = await apiListPendingPayments(authApi, { clientId: action.clientId });
-    expect(pending.items.map((p) => p.eventId)).not.toContain(action.eventId);
-    expect((await apiGetPaymentSummary(authApi, action.eventId)).financialStatus).toBe(FIN_STATUS_NOT_CHARGED);
+    // §4 back 5 — a prontidão do comunitário não tem o requisito de sinal; o
+    // evento pago tem (controle).
+    const readiness = await apiGetReadiness(authApi, eventId);
+    expect(readiness.map((r) => r.key)).not.toContain('deposit_paid');
+    const paid = await setupAcceptedEvent(authApi);
+    const paidReadiness = await apiGetReadiness(authApi, paid.eventId);
+    expect(paidReadiness.map((r) => r.key)).toContain('deposit_paid');
+
+    // §4 back 1 — excedente: a sugestão some e cobrar é recusado com 409.
+    await completeWithLeader(authApi, eventId);
+    await assertOk(
+      await authApi.post(`/api/events/${eventId}/actual-children`, { data: { actualChildrenCount: 15 } }),
+      'POST actual-children',
+    );
+    const profitability = await getProfitability(authApi, eventId);
+    expect(profitability.childrenVariance).toBe(5);
+    expect(profitability.excessSuggestion, 'sem sugestão de cobrança no comunitário').toBeNull();
+
+    const charge = await authApi.post(`/api/events/${eventId}/excess-charge`, { data: { confirmed: true, notes: null } });
+    expect(charge.status(), 'cobrar excedente').toBe(409);
+    expect(await apiErrorCodes(charge)).toContain('Event.NotChargeable');
+    expect(await apiGetPaymentPlan(authApi, eventId), 'nenhum plano nasce').toBeNull();
+    expect((await getEvent(authApi, eventId)).total).toBe(0);
+
+    // O card de excedente some da aba (que no comunitário é "Custo da ação").
+    await authPage.goto(`/app/events/${eventId}`);
+    await tab(authPage, 'Custo da ação').click();
+    await expect(authPage.getByTestId('profitability-variance')).toContainText('5 criança(s) além do contratado');
+    await expect(authPage.getByTestId('profitability-excess-card')).toHaveCount(0);
+    await expect(authPage.getByTestId('profitability-charge-excess')).toHaveCount(0);
   });
 
-  // ───────────────────────────── EC-C (Etapa 249) ─────────────────────────────
-
-  // E6 — §5 back 1 e 3; front 1 e 2.
-  test('E6 @flow with paid team, a transport expense and consumed material, "Custo da ação" shows the sum and the reference value; the month report shows the community investment and the average ticket does not change', async ({
-    authApi,
+  test('E6 @flow custo da ação (cachê + bônus, transporte, conferência acima do previsto) igual na aba, no relatório e no painel; a cancelada fica de fora; ticket e margem médios só dos pagos; filtro, export e o link do painel', async ({
     authPage,
+    authApi,
     tenant,
   }) => {
-    test.setTimeout(300_000);
+    test.setTimeout(360_000);
+    await apiCompleteOnboarding(authApi);
     enableFeatureFlagDirect(tenant.tenantId, 'feature_stock');
-    await apiCreateCollaboratorLevel(authApi, 150);
-    const today = tenantToday();
-    const month = monthRange(today);
+    const today = tenantDay(0);
+    const month = tenantMonth();
 
-    // Uma festa paga no mês: a base do ticket médio.
-    await setupAcceptedEvent(authApi, { budget: { eventDate: today } });
-    const before = (await apiEventReport(authApi, { fromDate: month.from, toDate: month.to })).summary;
-    expect(before.averageTicket, 'ticket médio da festa paga (pré-condição)').not.toBeNull();
+    // Um evento PAGO no mês (antes do nível de colaborador: sem custo de equipe
+    // conhecido, a trava de margem não age no envio).
+    const paid = await setupAcceptedEvent(authApi, { budget: { eventDate: today } });
+    const paidTotal = (await apiGetPaymentSummary(authApi, paid.eventId)).eventTotal;
+    expect(paidTotal).toBeGreaterThan(0);
 
-    // Material que a atividade consome por criança, com estoque comprado.
-    const product = await apiCreateProduct(authApi, { unitCost: 2.5 });
+    // Custo estimado conhecido: um nível (equipe de 2 × 120) e o material.
+    await apiCreateCollaboratorLevel(authApi, { baseValue: 120 });
+    const unitCost = 10;
+    const product = await apiCreateProduct(authApi, { name: `Tinta E2E ${uid()}`, unitCost });
     await assertOk(
       await authApi.post('/api/stock/movements', {
-        data: { productId: product.id, type: 'Purchase', quantity: 100, unitCost: 2.5, supplierName: 'Fornecedor E2E' },
+        data: { productId: product.id, type: 'Purchase', quantity: 100, unitCost, supplierName: 'Fornecedor E2E' },
       }),
-      'POST /api/stock/movements',
+      'POST /api/stock/movements (compra)',
     );
     const activity = await apiCreateActivity(authApi, {
-      status: 'Active',
       activityProducts: [{ productId: product.id, qtyPerChild: 1, isChecklistOnly: false }],
     });
-    const action = await communityToday(authApi, { activityIds: [activity.id], budget: { childrenCount: 10 } });
 
-    // Equipe paga (cachê fixo, quitado), transporte e a ação realizada.
-    const recreatorId = await assignLeader(authApi, action.eventId);
-    const fee = await apiCreateCommission(authApi, action.eventId, {
-      collaboratorId: recreatorId,
-      kind: 'FixedAmount',
-      value: 200,
-    });
+    // A ação do mês e uma segunda, cancelada, com despesa própria.
+    const action = await setupCommunityAction(authApi, { activityIds: [activity.id], childrenCount: 10 });
+    await apiPatchEvent(authApi, action.eventId, { eventDate: today });
+    const cancelled = await setupCommunityAction(authApi);
+    await apiPatchEvent(authApi, cancelled.eventId, { eventDate: today });
+    await addEventExpense(authApi, cancelled.eventId, 500, 'Transporte');
     await assertOk(
-      await authApi.post(`/api/events/${action.eventId}/commissions/${fee.id}/mark-paid`),
-      'POST commission mark-paid',
+      await authApi.post(`/api/events/${cancelled.eventId}/cancel`, { data: { reason: 'Escola remarcou (E2E)' } }),
+      'POST cancel (segunda ação)',
     );
-    await apiCreateEventExpense(authApi, action.eventId, {
-      amount: 85,
-      category: 'Transporte',
-      date: today,
-      description: 'Van até a escola',
-    });
-    await runAction(authApi, action.eventId);
 
-    const profitability = await apiGetProfitability(authApi, action.eventId);
-    const cost = profitability.communityCost;
-    expect(cost, 'bloco "custo da ação"').not.toBeNull();
-    expect(cost!.referenceValue).toBeCloseTo(action.referenceValue, 2);
-    expect(cost!.breakdown.team, 'equipe = o cachê acordado').toBeCloseTo(200, 2);
-    expect(cost!.breakdown.expenses, 'despesa de transporte').toBeCloseTo(85, 2);
-    expect(cost!.breakdown.material, 'material baixado').toBeGreaterThan(0);
-    expect(cost!.realCost, 'o custo real é a soma da quebra').toBeCloseTo(
-      sum(Object.values(cost!.breakdown)),
+    // Equipe: o recreador do Portal lidera; cachê combinado 150 + bônus 50.
+    const { collaboratorId, portal } = await setupConfirmedPortalCollaborator(authApi, tenant.tenantId, action.eventId);
+    try {
+      await assertOk(
+        await postCommission(authApi, action.eventId, { collaboratorId, kind: 'FixedAmount', value: 150 }),
+        'POST cachê fixo',
+      );
+      await assertOk(
+        await postCommission(authApi, action.eventId, {
+          collaboratorId,
+          kind: 'Bonus',
+          value: 50,
+          notes: 'Ficou além do horário (E2E)',
+        }),
+        'POST bônus',
+      );
+      await addEventExpense(authApi, action.eventId, 80, 'Transporte');
+      await completeWithLeader(authApi, action.eventId, collaboratorId);
+
+      // Conferência de consumo: o recreador lança 3 a mais e o gestor confirma.
+      const review = await portal.api.get(`/api/portal/my-events/${action.eventId}/material-consumption`);
+      await assertOk(review, 'GET material-consumption (portal)');
+      const records = (await readJson<{ records: Array<{ id: string; productId: string; predictedQuantity: number }> }>(review))
+        .records;
+      const record = records.find((r) => r.productId === product.id);
+      expect(record, 'registro de consumo do produto').toBeTruthy();
+      await assertOk(
+        await portal.api.post(`/api/portal/my-events/${action.eventId}/material-consumption`, {
+          data: { lines: [{ recordId: record!.id, actualQuantity: record!.predictedQuantity + 3, reason: 'Usou mais tinta (E2E)' }] },
+        }),
+        'POST material-consumption (portal)',
+      );
+      await assertOk(
+        await authApi.post(`/api/stock/consumption-reviews/${action.eventId}/confirm`, { data: { corrections: [] } }),
+        'POST consumption-reviews confirm',
+      );
+    } finally {
+      await portal.api.dispose();
+    }
+
+    // §5 back 1 — o custo da ação: referência, estimado × real, a soma, sem margem.
+    const ev = await getEvent(authApi, action.eventId);
+    const profitability = await getProfitability(authApi, action.eventId);
+    expect(profitability.frozenMarginAmount, 'sem margem congelada').toBeNull();
+    expect(profitability.frozenMarginPercent).toBeNull();
+    expect(profitability.realMarginAmount, 'sem margem real').toBeNull();
+    expect(profitability.realMarginPercent).toBeNull();
+    const cc = profitability.communityCost;
+    expect(cc, 'bloco do custo da ação').toBeTruthy();
+    expect(cc!.referenceValue).toBeCloseTo(ev.subtotal, 2);
+
+    const team = costLine(cc!.lines, 'Team');
+    expect(team.estimated, 'equipe estimada: 2 × 120').toBeCloseTo(240, 2);
+    expect(team.real, 'equipe = combinado + bônus').toBeCloseTo(200, 2);
+    expect(team.isEstimate).toBe(false);
+    const expenses = costLine(cc!.lines, 'Expenses');
+    expect(expenses.real, 'despesa de transporte').toBeCloseTo(80, 2);
+    const material = costLine(cc!.lines, 'Material');
+    expect(material.estimated, 'material estimado').not.toBeNull();
+    expect(material.real - (material.estimated ?? 0), 'material = estimado + variação (3 × 10)').toBeCloseTo(3 * unitCost, 2);
+    expect(material.isEstimate).toBe(false);
+    const sum = cc!.lines.reduce((acc, l) => acc + l.real, 0);
+    expect(cc!.realCost, 'o custo real é a soma das linhas').toBeCloseTo(sum, 2);
+
+    // A aba "Custo da ação" mostra os mesmos números, sem a ponte de margem.
+    await authPage.goto(`/app/events/${action.eventId}`);
+    await tab(authPage, 'Custo da ação').click();
+    await expectMoney(authPage.getByTestId('profitability-community-reference'), cc!.referenceValue, 'referência na aba');
+    if (cc!.estimatedCost !== null) {
+      await expectMoney(authPage.getByTestId('profitability-community-estimated'), cc!.estimatedCost, 'estimado na aba');
+    }
+    await expectMoney(authPage.getByTestId('profitability-community-real'), cc!.realCost, 'real na aba');
+    await expectMoney(
+      authPage.locator(`[data-testid="profitability-community-line-${team.category}"]`),
+      team.real,
+      'linha da equipe',
+    );
+    await expect(authPage.getByTestId('profitability-bridge'), 'sem a ponte de margem').toHaveCount(0);
+
+    // §5 back 2 e 3 — a mesma conta no relatório do mês, sem a cancelada.
+    const all = await getReport(authApi, { fromDate: month.from, toDate: month.to });
+    const row = all.items.items.find((r) => r.eventId === action.eventId);
+    expect(row, 'a ação na lista do relatório').toBeTruthy();
+    expect(row!.chargeMode).toBe('Community');
+    expect(row!.referenceValue ?? 0).toBeCloseTo(cc!.referenceValue, 2);
+    expect(row!.realCost ?? 0, 'custo real da linha = o da aba').toBeCloseTo(cc!.realCost, 2);
+    expect(all.summary.community, 'bloco comunitário do resumo').toBeTruthy();
+    expect(all.summary.community!.count, 'a cancelada fica de fora').toBe(1);
+    expect(all.summary.community!.realCostTotal, 'KPI de investimento = custo da ação').toBeCloseTo(cc!.realCost, 2);
+
+    // Ticket e margem médios ("eventos pagos") não mudam com a ação.
+    const chargedOnly = await getReport(authApi, { fromDate: month.from, toDate: month.to, chargeMode: 'Charged' });
+    expect(all.summary.averageTicket, 'ticket médio só do pago').toBeCloseTo(paidTotal, 2);
+    expect(all.summary.averageTicket).toBe(chargedOnly.summary.averageTicket);
+    expect(all.summary.averageMarginPercent).toBe(chargedOnly.summary.averageMarginPercent);
+
+    // Filtro "Cobrança: Comunitários".
+    const communityOnly = await getReport(authApi, { fromDate: month.from, toDate: month.to, chargeMode: 'Community' });
+    const ids = communityOnly.items.items.map((r) => r.eventId);
+    expect(ids).toContain(action.eventId);
+    expect(ids, 'o filtro tira o pago').not.toContain(paid.eventId);
+    for (const r of communityOnly.items.items) expect(r.chargeMode).toBe('Community');
+
+    // Export com as colunas novas.
+    const csv = await authApi.get(
+      `/api/reports/events/export?format=Csv&fromDate=${month.from}&toDate=${month.to}&chargeMode=Community`,
+    );
+    await assertOk(csv, 'GET export CSV');
+    // O CSV usa cabeçalho ASCII em camel (StatusFinanceiro); os rótulos com
+    // espaço ("Cobrança", "Valor de Referência", "Custo Real") são do Excel.
+    const lines = (await csv.text())
+      .replace(/^﻿/, '')
+      .split(/\r?\n/)
+      .filter((l) => l.trim() !== '');
+    const header = parseCsvLine(lines[0] ?? '');
+    const colCharge = header.indexOf('Cobranca');
+    const colReference = header.indexOf('ValorReferencia');
+    const colRealCost = header.indexOf('CustoReal');
+    expect(colCharge, 'coluna "Cobranca" no export').toBeGreaterThanOrEqual(0);
+    expect(colReference, 'coluna "ValorReferencia" no export').toBeGreaterThanOrEqual(0);
+    expect(colRealCost, 'coluna "CustoReal" no export').toBeGreaterThanOrEqual(0);
+    const csvRows = lines.slice(1).map(parseCsvLine);
+    expect(csvRows.length, 'linhas no export filtrado').toBeGreaterThan(0);
+    for (const r of csvRows) expect(r[colCharge], 'export filtrado só com comunitários').toBe('Comunitário');
+    const ptBrNumber = (s: string | undefined) => Number((s ?? '').replace(',', '.'));
+    const actionRow = csvRows.find((r) => Math.abs(ptBrNumber(r[colRealCost]) - cc!.realCost) < 0.005);
+    expect(actionRow, 'linha da ação no export com o custo real da aba').toBeTruthy();
+    expect(ptBrNumber(actionRow![colReference]), 'valor de referência no export = o da aba').toBeCloseTo(
+      cc!.referenceValue,
       2,
     );
-    expect(profitability.realMarginPercent, 'sem margem').toBeNull();
-    expect(profitability.realMarginAmount).toBeNull();
-    expect(profitability.excessSuggestion).toBeNull();
 
-    // O relatório do mês: o investimento comunitário e o ticket médio igual.
-    const after = (await apiEventReport(authApi, { fromDate: month.from, toDate: month.to })).summary;
-    expect(after.totalEvents).toBe(before.totalEvents + 1);
-    expect(after.averageTicket, 'o ticket médio não muda').toBeCloseTo(before.averageTicket!, 2);
-    expect(after.community?.count).toBe(1);
-    expect(after.community!.referenceValueTotal).toBeCloseTo(action.referenceValue, 2);
-    expect(after.community!.breakdown.team).toBeCloseTo(200, 2);
-    expect(after.community!.breakdown.expenses).toBeCloseTo(85, 2);
-    expect(after.community!.realCostTotal).toBeGreaterThan(0);
+    // §5 back 4 — o card do painel financeiro: quantidade e custo do mês.
+    const dashboard = await getFinancialDashboard(authApi);
+    expect(dashboard.communityThisMonth, 'bloco do mês para quem vê margem').toBeTruthy();
+    expect(dashboard.communityThisMonth!.count).toBe(1);
+    expect(dashboard.communityThisMonth!.realCostTotal).toBeCloseTo(cc!.realCost, 2);
 
-    // A tela: a aba "Custo da ação" e o KPI do relatório.
-    await apiCompleteOnboarding(authApi);
-    await openEvent(authPage, action.eventId);
-    await expect(authPage.getByRole('tab', { name: 'Rentabilidade', exact: true })).toHaveCount(0);
-    await authPage.getByRole('tab', { name: 'Custo da ação', exact: true }).click();
-    await expect(authPage.getByTestId('profitability-community-reference')).toContainText(brl(cost!.referenceValue));
-    await expect(authPage.getByTestId('profitability-community-real')).toContainText(brl(cost!.realCost));
-    const breakdown = authPage.getByTestId('profitability-community-breakdown');
-    await expect(breakdown).toContainText(brl(85));
-    await expect(breakdown).toContainText(brl(200));
-
-    await authPage.goto(`/app/finance/reports?fromDate=${month.from}&toDate=${month.to}`);
-    await expect(authPage.getByTestId('summary-community')).toBeVisible({ timeout: 20_000 });
-    await expect(authPage.getByTestId('summary-community-realCost')).toContainText(
-      brl(after.community!.realCostTotal),
-    );
-    await expect(authPage.getByTestId('summary-community-referenceValue')).toContainText(brl(action.referenceValue));
-    await expect(authPage.getByTestId('summary-averageTicket')).toContainText(brl(before.averageTicket!));
-    await expect(authPage.getByTestId('summary-averageTicket-note')).toHaveText('(eventos pagos)');
+    await authPage.goto('/app/dashboard/financial');
+    await expectMoney(authPage.getByTestId('kpi-community-real-cost'), cc!.realCost, 'custo no card');
+    await expect(authPage.getByTestId('kpi-community-count')).toContainText('1 ação');
+    await authPage.getByTestId('kpi-community-report-link').click();
+    await authPage.waitForURL(/\/app\/finance\/reports\?.*chargeMode=Community/);
+    await expectMoney(authPage.getByTestId('summary-community-realCost'), cc!.realCost, 'o mesmo número no relatório');
+    await expect(authPage.getByTestId('summary-community-reference')).toContainText('1 ação');
   });
 
-  // E16 — §5 "Testes", Api sem `pricing.viewmargin`; front 1 e 3.
-  test('E16 @flow without pricing.viewmargin the community detail has no "Custo da ação" tab and the financial dashboard has no community card; the report still shows the community KPI', async ({
-    authApi,
+  test('E12 @flow sem pricing.viewmargin a tela não mostra "Custo da ação" nem o card do painel, e o relatório mostra o investimento; o custo de outro tenant nunca entra no KPI', async ({
     authPage,
+    authApi,
   }) => {
-    test.setTimeout(180_000);
-    await apiCreateCollaboratorLevel(authApi, 150);
-    const month = monthRange(tenantToday());
-    const action = await communityToday(authApi);
-
-    // Controle com quem vê margem: o custo e o card existem para este tenant.
-    expect((await apiGetProfitability(authApi, action.eventId)).communityCost).not.toBeNull();
-    expect((await apiFinancialDashboard(authApi)).community?.count).toBe(1);
-
+    test.setTimeout(240_000);
     await apiCompleteOnboarding(authApi);
-    await stripUiPermissions(authPage, ['pricing.viewmargin']);
+    const today = tenantDay(0);
+    const month = tenantMonth();
 
-    await openEvent(authPage, action.eventId);
+    // A: uma ação do mês, com despesa.
+    const mine = await setupCommunityAction(authApi);
+    await apiPatchEvent(authApi, mine.eventId, { eventDate: today });
+    await addEventExpense(authApi, mine.eventId, 70, 'Lanche');
+    const myCost = (await getProfitability(authApi, mine.eventId)).communityCost!.realCost;
+
+    // B: outra empresa, ação do mesmo mês com custo bem maior.
+    const other = await signupNewTenant();
+    const otherApi = await createBearerApiContext(other.accessToken);
+    try {
+      const theirs = await setupCommunityAction(otherApi);
+      await apiPatchEvent(otherApi, theirs.eventId, { eventDate: today });
+      await addEventExpense(otherApi, theirs.eventId, 999, 'Transporte');
+    } finally {
+      await otherApi.dispose();
+    }
+
+    // O KPI de A não soma o custo de B (relatório e painel).
+    const report = await getReport(authApi, { fromDate: month.from, toDate: month.to });
+    expect(report.summary.community!.count).toBe(1);
+    expect(report.summary.community!.realCostTotal, 'só o custo de A').toBeCloseTo(myCost, 2);
+    const dashboard = await getFinancialDashboard(authApi);
+    expect(dashboard.communityThisMonth!.count).toBe(1);
+    expect(dashboard.communityThisMonth!.realCostTotal).toBeCloseTo(myCost, 2);
+
+    // A tela de quem tem `dashboard.read` e `reports.read` sem `pricing.viewmargin`.
+    await withoutPermissions(authPage, ['pricing.viewmargin']);
+
+    await authPage.goto(`/app/events/${mine.eventId}`);
     await expect(authPage.getByTestId('event-detail-community')).toBeVisible();
-    await expect(authPage.getByRole('tab', { name: 'Financeiro', exact: true })).toBeVisible();
-    await expect(authPage.getByRole('tab', { name: 'Custo da ação', exact: true })).toHaveCount(0);
-    await expect(authPage.getByRole('tab', { name: 'Rentabilidade', exact: true })).toHaveCount(0);
+    await expect(tab(authPage, 'Visão geral')).toBeVisible();
+    await expect(tab(authPage, 'Custo da ação'), 'sem a aba do custo').toHaveCount(0);
+    await expect(tab(authPage, 'Rentabilidade')).toHaveCount(0);
 
     await authPage.goto('/app/dashboard/financial');
-    await expect(authPage.getByTestId('financial-kpi-cards')).toBeVisible({ timeout: 20_000 });
-    await expect(authPage.getByTestId('financial-community-card')).toHaveCount(0);
+    await expect(authPage.getByTestId('financial-kpi-cards'), 'o painel abre').toBeVisible();
+    await expect(authPage.getByTestId('kpi-community-month'), 'sem o card comunitário').toHaveCount(0);
 
-    // O relatório segue a regra da margem média: o bloco sai para `reports.read`.
-    await authPage.goto(`/app/finance/reports?fromDate=${month.from}&toDate=${month.to}`);
-    await expect(authPage.getByTestId('summary-community')).toBeVisible({ timeout: 20_000 });
-    await expect(authPage.getByTestId('summary-community-count')).toContainText('1');
-    await expect(authPage.getByTestId('summary-averageMarginPercent')).toBeVisible();
+    await authPage.goto(`/app/finance/reports?chargeMode=Community&fromDate=${month.from}&toDate=${month.to}`);
+    await expectMoney(authPage.getByTestId('summary-community-realCost'), myCost, 'KPI de investimento com reports.read');
   });
 
-  // E17 — §5 back 3 e 4; front 3.
-  test('E17 @flow the dashboard card "Ações comunitárias no mês" has the same count and real cost as the month report; "Ver no relatório" opens the report already filtered with the same number; a canceled action does not count; the month revenue does not change', async ({
-    authApi,
-    authPage,
-  }) => {
-    test.setTimeout(240_000);
-    await apiCreateCollaboratorLevel(authApi, 150);
-    const today = tenantToday();
-    const month = monthRange(today);
-
-    // Receita do mês: uma festa paga e quitada hoje.
-    await setupPaidEvent(authApi, { budget: { eventDate: today } });
-    const before = await apiFinancialDashboard(authApi);
-    expect(before.revenueThisMonth, 'receita do mês (pré-condição)').toBeGreaterThan(0);
-
-    const action = await communityToday(authApi);
-    await apiCreateEventExpense(authApi, action.eventId, { amount: 70, category: 'Lanche', date: today });
-    const canceled = await communityToday(authApi);
-    await assertOk(
-      await authApi.post(`/api/events/${canceled.eventId}/cancel`, { data: { reason: 'Chuva forte' } }),
-      'POST /api/events/{id}/cancel',
-    );
-
-    const after = await apiFinancialDashboard(authApi);
-    expect(after.revenueThisMonth, 'a receita do mês não muda').toBeCloseTo(before.revenueThisMonth, 2);
-    expect(after.receivedThisMonth).toBeCloseTo(before.receivedThisMonth, 2);
-    const card = after.community;
-    expect(card, 'bloco comunitário para quem vê margem').not.toBeNull();
-    expect(`${card!.year}-${String(card!.month).padStart(2, '0')}`).toBe(today.slice(0, 7));
-    expect(card!.count, 'a ação cancelada não entra').toBe(1);
-    expect(card!.referenceValueTotal).toBeCloseTo(action.referenceValue, 2);
-
-    const report = (
-      await apiEventReport(authApi, {
-        fromDate: month.from,
-        toDate: month.to,
-        chargeMode: 'Community',
-        statusFilter: LIVE_EVENT_STATUSES,
-      })
-    ).summary;
-    expect(report.community?.count, 'mesma quantidade').toBe(card!.count);
-    expect(report.community!.realCostTotal, 'mesmo custo real').toBeCloseTo(card!.realCostTotal, 2);
-    expect(report.community!.referenceValueTotal).toBeCloseTo(card!.referenceValueTotal, 2);
-
-    // A tela: o card e o link para o relatório filtrado.
-    await apiCompleteOnboarding(authApi);
-    await authPage.goto('/app/dashboard/financial');
-    const communityCard = authPage.getByTestId('financial-community-card');
-    await expect(communityCard).toBeVisible({ timeout: 20_000 });
-    await expect(authPage.getByTestId('financial-community-count')).toContainText('1');
-    await expect(authPage.getByTestId('financial-community-real-cost')).toContainText(brl(card!.realCostTotal));
-    await expect(authPage.getByTestId('kpi-revenue-month')).toContainText(brl(before.revenueThisMonth));
-
-    await authPage.getByTestId('financial-community-report-link').click();
-    await authPage.waitForURL(/\/app\/finance\/reports\?/, { timeout: 20_000 });
-    const params = new URL(authPage.url()).searchParams;
-    expect(params.get('chargeMode')).toBe('Community');
-    expect(params.get('fromDate')).toBe(month.from);
-    expect(params.get('toDate')).toBe(month.to);
-    expect((params.get('statusFilter') ?? '').split(',').sort()).toEqual(LIVE_EVENT_STATUSES.split(',').sort());
-
-    await expect(authPage.getByTestId('summary-community-count')).toContainText('1', { timeout: 20_000 });
-    await expect(authPage.getByTestId('summary-community-realCost')).toContainText(brl(card!.realCostTotal));
-    await expect(authPage.getByTestId(`reports-row-community-${action.eventId}`)).toBeVisible();
-    await expect(authPage.getByTestId(`reports-row-community-${canceled.eventId}`)).toHaveCount(0);
-  });
-
-  // E18 — §5 back 2; front 2.
-  test('E18 @flow the event report with a paid and a community event: "Sem plano" does not bring the community one, its row says "Sem cobrança" with reference value and cost, and the CSV and Excel exports carry the new columns, empty on the paid event', async ({
-    authApi,
-    authPage,
-  }) => {
-    test.setTimeout(240_000);
-    await apiCreateCollaboratorLevel(authApi, 150);
-    const today = tenantToday();
-    const month = monthRange(today);
-
-    // Festa paga sem plano (o tenant novo não tem modelo de parcelas padrão).
-    const paid = await setupAcceptedEvent(authApi, { budget: { eventDate: today } });
-    const action = await communityToday(authApi);
-    await apiCreateEventExpense(authApi, action.eventId, { amount: 40, category: 'Material', date: today });
-
-    const { rows } = await apiEventReport(authApi, { fromDate: month.from, toDate: month.to });
-    const paidRow = rows.find((r) => r.eventId === paid.eventId);
-    const communityRow = rows.find((r) => r.eventId === action.eventId);
-    expect(paidRow, 'linha da festa paga').toBeTruthy();
-    expect(communityRow, 'linha da ação').toBeTruthy();
-    expect(communityRow!.chargeMode).toBe('Community');
-    expect(communityRow!.financialStatus).toBe(FIN_STATUS_NOT_CHARGED);
-    expect(communityRow!.total).toBe(0);
-    expect(communityRow!.referenceValue).toBeCloseTo(action.referenceValue, 2);
-    expect(communityRow!.realCost, 'custo da ação na linha').not.toBeNull();
-    expect(communityRow!.realCost!).toBeGreaterThan(0);
-    expect(paidRow!.chargeMode).toBe('Charged');
-    expect(paidRow!.financialStatus, 'pago sem plano (pré-condição)').toBeNull();
-    expect(paidRow!.referenceValue).toBeNull();
-    expect(paidRow!.realCost).toBeNull();
-
-    // "Sem plano" traz a paga e não a comunitária.
-    const noPlan = await apiEventReport(authApi, { fromDate: month.from, toDate: month.to, financialStatus: 'NoPlan' });
-    const noPlanIds = noPlan.rows.map((r) => r.eventId);
-    expect(noPlanIds).toContain(paid.eventId);
-    expect(noPlanIds).not.toContain(action.eventId);
-
-    // CSV: colunas novas (nome de propriedade, como as outras do CSV), vazias no pago.
-    const period = { fromDate: month.from, toDate: month.to };
-    const csv = parseCsv((await apiExportEventReport(authApi, period, 'Csv')).toString('utf8'));
-    const header = csv[0]!;
-    const col = (name: string) => {
-      const index = header.indexOf(name);
-      expect(index, `coluna ${name} no CSV`).toBeGreaterThanOrEqual(0);
-      return index;
-    };
-    const [chargeCol, referenceCol, costCol, clientCol] = [
-      col('Cobranca'),
-      col('ValorReferencia'),
-      col('CustoReal'),
-      col('Cliente'),
-    ];
-    const csvPaid = csv.find((r) => r[clientCol] === paidRow!.clientName);
-    const csvCommunity = csv.find((r) => r[clientCol] === communityRow!.clientName);
-    expect(csvPaid, 'linha paga no CSV').toBeTruthy();
-    expect(csvCommunity, 'linha comunitária no CSV').toBeTruthy();
-    expect(csvPaid![chargeCol]).toBe('Charged');
-    expect(csvPaid![referenceCol], 'valor de referência vazio no pago').toBe('');
-    expect(csvPaid![costCol], 'custo real vazio no pago').toBe('');
-    expect(csvCommunity![chargeCol]).toBe('Community');
-    expect(csvCommunity![referenceCol]).toBe(csvDecimal(communityRow!.referenceValue!));
-    expect(csvCommunity![costCol]).toBe(csvDecimal(communityRow!.realCost!));
-
-    // Excel: os rótulos do plano, vazios no pago.
-    const sheet = readXlsxRows(await apiExportEventReport(authApi, period, 'Excel'));
-    const xHeader = sheet[0]!;
-    const xCol = (name: string) => {
-      const index = xHeader.indexOf(name);
-      expect(index, `coluna "${name}" no Excel`).toBeGreaterThanOrEqual(0);
-      return index;
-    };
-    const [xCharge, xReference, xCost, xClient] = [
-      xCol('Cobrança'),
-      xCol('Valor de Referência'),
-      xCol('Custo Real'),
-      xCol('Cliente'),
-    ];
-    const xPaid = sheet.find((r) => r[xClient] === paidRow!.clientName);
-    const xCommunity = sheet.find((r) => r[xClient] === communityRow!.clientName);
-    expect(xPaid, 'linha paga no Excel').toBeTruthy();
-    expect(xCommunity, 'linha comunitária no Excel').toBeTruthy();
-    expect(xPaid![xReference] ?? '', 'valor de referência vazio no pago').toBe('');
-    expect(xPaid![xCost] ?? '', 'custo real vazio no pago').toBe('');
-    expect(xCommunity![xCharge]).toBe('Community');
-    expect(Number(xCommunity![xReference])).toBeCloseTo(communityRow!.referenceValue!, 2);
-    expect(Number(xCommunity![xCost])).toBeCloseTo(communityRow!.realCost!, 2);
-
-    // A tela: a linha diz "Sem cobrança" com a referência e o custo.
-    await apiCompleteOnboarding(authApi);
-    await authPage.goto(`/app/finance/reports?fromDate=${month.from}&toDate=${month.to}`);
-    const chip = authPage.getByTestId(`reports-row-community-${action.eventId}`);
-    await expect(chip).toBeVisible({ timeout: 20_000 });
-    const row = authPage.locator('tr', { has: chip });
-    await expect(row).toContainText('Sem cobrança');
-    await expect(authPage.getByTestId(`reports-row-reference-${action.eventId}`)).toContainText(
-      brl(communityRow!.referenceValue!),
-    );
-    await expect(authPage.getByTestId(`reports-row-cost-${action.eventId}`)).toContainText(
-      brl(communityRow!.realCost!),
-    );
-
-    await authPage.goto(`/app/finance/reports?fromDate=${month.from}&toDate=${month.to}&financialStatus=NoPlan`);
-    await expect(authPage.getByTestId('reports-table')).toContainText(paidRow!.clientName!, { timeout: 20_000 });
-    await expect(authPage.getByTestId(`reports-row-community-${action.eventId}`)).toHaveCount(0);
-  });
-});
-
-twoTenantsTest.describe('Fluxo 11 — community event: tenant isolation', () => {
-  // E18 — "ação de outro tenant nunca aparece".
-  twoTenantsTest('E18 @flow a community action of another tenant never shows in the report, its summary or its export', async ({
-    apiA,
-    apiB,
-    tenantA,
-    tenantB,
-  }) => {
-    twoTenantsTest.setTimeout(180_000);
-    expect(tenantB.tenantId, 'dois tenants distintos').not.toBe(tenantA.tenantId);
-    const month = monthRange(tenantToday());
-
-    const actionB = await communityToday(apiB);
-    await apiCreateEventExpense(apiB, actionB.eventId, { amount: 55, category: 'Transporte', date: tenantToday() });
-    const paidA = await setupAcceptedEvent(apiA, { budget: { eventDate: tenantToday() } });
-
-    const all = await apiEventReport(apiA, { fromDate: month.from, toDate: month.to });
-    expect(all.rows.map((r) => r.eventId)).toContain(paidA.eventId);
-    expect(all.rows.map((r) => r.eventId)).not.toContain(actionB.eventId);
-    expect(all.summary.community, 'nenhum comunitário no tenant A').toBeNull();
-
-    const community = await apiEventReport(apiA, { fromDate: month.from, toDate: month.to, chargeMode: 'Community' });
-    expect(community.rows).toHaveLength(0);
-
-    const csv = (await apiExportEventReport(apiA, { fromDate: month.from, toDate: month.to }, 'Csv')).toString('utf8');
-    expect(csv).not.toContain(actionB.clientName);
-
-    // B continua vendo a própria ação.
-    const own = await apiEventReport(apiB, { fromDate: month.from, toDate: month.to, chargeMode: 'Community' });
-    expect(own.rows.map((r) => r.eventId)).toEqual([actionB.eventId]);
-  });
+  test.fixme(
+    'E12 @flow usuário REAL sem pricing.viewmargin: 403 em /profitability e painel com o bloco comunitário null',
+    async () => {
+      // Não montável no e2e: nenhum papel do tenant tem `dashboard.read` e
+      // `reports.read` sem `pricing.viewmargin` (Owner, Admin, Manager e
+      // Financial têm a permission; `Permissions.ForRole`), e "role
+      // customizada" não existe no produto (`Domain/Auth/Role.cs`). Os testes
+      // de Api do back cobrem com o `IPermissionService` decorado.
+    },
+  );
 });

@@ -1,5 +1,5 @@
 import { APIRequestContext, APIResponse, request as playwrightRequest } from '@playwright/test';
-import { CreatedEntity } from './api-entities';
+import { CreatedEntity, apiCreateActivity, apiCreateClient } from './api-entities';
 
 /**
  * Primitivas de API para o fluxo de evento (orçamento → aceite → evento →
@@ -64,16 +64,14 @@ export interface CreateBudgetInput {
    */
   eventCategoryId?: string;
   /**
-   * Modo de cobrança (Etapa 247, PLANO-EVENTO-COMUNITARIO): `Community` é a
-   * ação comunitária sem cobrança e exige `budgets.community`. Omitido = `Charged`.
+   * Etapa 247 — modo de cobrança. `Community` = ação comunitária (total zero,
+   * valor de referência no subtotal); exige `budgets.community`. Omitido = `Charged`.
    */
   chargeMode?: 'Charged' | 'Community';
-  /** Desconto em % do subtotal. Omitido = sem desconto. */
-  discountPercentage?: number;
-  /** Valor cobrado por colaborador. Default 200. */
-  teamPricePerCollaborator?: number;
-  /** Taxa de deslocamento cobrada. Default 0. */
+  /** Taxa de deslocamento cobrada; default 0. */
   displacementFee?: number;
+  /** Preço por colaborador da equipe; default 200. */
+  teamPricePerCollaborator?: number;
 }
 
 function todayPlus(days: number): string {
@@ -100,12 +98,14 @@ function defaultValidUntil(eventDate: string): string {
   return dayBefore < standard ? dayBefore : standard;
 }
 
-export async function apiCreateBudget(
-  api: APIRequestContext,
-  input: CreateBudgetInput,
-): Promise<CreatedEntity> {
+/**
+ * Corpo do `POST /api/budgets` com os defaults do `apiCreateBudget`. O `PUT
+ * /api/budgets/{id}` é estado completo e recebe o mesmo corpo sem o `clientId`
+ * (`apiUpdateBudget`).
+ */
+export function budgetRequestBody(input: CreateBudgetInput): Record<string, unknown> {
   const eventDate = input.eventDate ?? todayPlus(30);
-  const body = {
+  return {
     clientId: input.clientId,
     eventDate,
     // Omitida no payload = evento de um dia (retrocompat do contrato).
@@ -119,7 +119,6 @@ export async function apiCreateBudget(
     teamSize: input.teamSize ?? 2,
     teamPricePerCollaborator: input.teamPricePerCollaborator ?? 200,
     displacementFee: input.displacementFee ?? 0,
-    ...(input.discountPercentage !== undefined ? { discountPercentage: input.discountPercentage } : {}),
     ...(input.chargeMode ? { chargeMode: input.chargeMode } : {}),
     items: input.activityIds.map((id) => ({ activityId: id, quantity: 1 })),
     ...(input.recurrence
@@ -144,9 +143,76 @@ export async function apiCreateBudget(
         }
       : {}),
   };
-  const res = await api.post('/api/budgets', { data: body });
+}
+
+export async function apiCreateBudget(
+  api: APIRequestContext,
+  input: CreateBudgetInput,
+): Promise<CreatedEntity> {
+  const res = await api.post('/api/budgets', { data: budgetRequestBody(input) });
   await expectOk(res, 'apiCreateBudget');
   return unwrap(await res.json());
+}
+
+/**
+ * PUT /api/budgets/{id} — estado completo, com os mesmos defaults do
+ * `apiCreateBudget` (passe o MESMO `input` da criação mais o que muda).
+ */
+export async function apiUpdateBudget(
+  api: APIRequestContext,
+  budgetId: string,
+  input: CreateBudgetInput,
+): Promise<CreatedEntity> {
+  const body = budgetRequestBody(input);
+  delete body.clientId;
+  const res = await api.put(`/api/budgets/${budgetId}`, { data: body });
+  await expectOk(res, 'apiUpdateBudget');
+  return unwrap(await res.json());
+}
+
+/** Resposta do aceite pelo gestor e da confirmação da ação comunitária (`AcceptBudgetResultDto`). */
+export interface AcceptBudgetResult {
+  anchorEventId: string;
+  seriesId: string | null;
+  eventsCreated: number;
+}
+
+/**
+ * POST /api/budgets/{id}/confirm-community (Etapa 247) — confirma a ação
+ * comunitária de `Draft` ou `Sent`, sem envio ao cliente; cria o evento sem
+ * parcelas. Exige `budgets.community`.
+ */
+export async function apiConfirmCommunityBudget(
+  api: APIRequestContext,
+  budgetId: string,
+): Promise<AcceptBudgetResult> {
+  const res = await api.post(`/api/budgets/${budgetId}/confirm-community`);
+  await expectOk(res, 'apiConfirmCommunityBudget');
+  return unwrap(await res.json()) as AcceptBudgetResult;
+}
+
+/**
+ * Ação comunitária confirmada pelo gestor (o `confirm-community` real, molde do
+ * `setupCommunityAction` do `fluxos-completos/11`): orçamento `Community` em
+ * rascunho para a escola e confirmação sem envio. O evento nasce sem plano de
+ * pagamento.
+ */
+export async function setupCommunityEvent(
+  api: APIRequestContext,
+  input: { eventDate: string; activityIds?: string[]; childrenCount?: number },
+): Promise<{ eventId: string; budgetId: string; clientId: string }> {
+  const suffix = Math.random().toString(36).slice(2, 8);
+  const client = await apiCreateClient(api, { name: `Escola E2E ${suffix}` });
+  const activityIds = input.activityIds ?? [(await apiCreateActivity(api)).id];
+  const budget = await apiCreateBudget(api, {
+    clientId: client.id,
+    activityIds,
+    eventDate: input.eventDate,
+    childrenCount: input.childrenCount ?? 10,
+    chargeMode: 'Community',
+  });
+  const confirmed = await apiConfirmCommunityBudget(api, budget.id);
+  return { eventId: confirmed.anchorEventId, budgetId: budget.id, clientId: client.id };
 }
 
 export interface BudgetSendResult {

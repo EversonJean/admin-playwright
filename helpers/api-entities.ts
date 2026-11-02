@@ -1,4 +1,4 @@
-import { APIRequestContext, APIResponse } from '@playwright/test';
+import { APIRequestContext } from '@playwright/test';
 import {
   fakeActivity,
   fakeClient,
@@ -126,12 +126,39 @@ export async function apiCreateActivity(
 }
 
 /**
+ * Passo de preparação do cadastro (Etapa 251, `ProductPreparationStepInputDto`
+ * e `EquipmentPreparationStepInputDto`, a mesma forma nos dois donos).
+ */
+export interface PreparationStepInput {
+  title: string;
+  category: 'Cleaning' | 'FunctionalTest' | 'Safety' | 'Accessories' | 'Packing' | 'Other';
+  isMandatory: boolean;
+  instructions?: string | null;
+}
+
+/** Vínculo do produto a uma atividade, visto do produto (`ActivityProducts` do `CreateProductDto`). */
+export interface ProductActivityLinkInput {
+  activityId: string;
+  qtyPerChild: number;
+  isChecklistOnly: boolean;
+}
+
+/**
  * POST /api/products — produto consumível ativo, sem vínculo com atividade.
- * Nome único por `Date.now()` quando o teste não passa um.
+ * Nome único por `Date.now()` quando o teste não passa um. `activityProducts`
+ * vincula o produto às atividades (o checklist de material da festa nasce do
+ * vínculo) e `preparationSteps` dá ao reutilizável os passos de preparação
+ * (PLANO-PREPARACAO-DE-EQUIPAMENTOS §9, Etapa 257).
  */
 export async function apiCreateProduct(
   api: APIRequestContext,
-  overrides: { name?: string; unitCost?: number; isReusable?: boolean } = {},
+  overrides: {
+    name?: string;
+    unitCost?: number;
+    isReusable?: boolean;
+    activityProducts?: ProductActivityLinkInput[];
+    preparationSteps?: PreparationStepInput[];
+  } = {},
 ): Promise<CreatedEntity & { name: string }> {
   const res = await api.post('/api/products', {
     data: {
@@ -140,7 +167,17 @@ export async function apiCreateProduct(
       unit: 'un',
       unitCost: overrides.unitCost ?? 1.5,
       isReusable: overrides.isReusable ?? false,
-      activityProducts: [],
+      activityProducts: overrides.activityProducts ?? [],
+      ...(overrides.preparationSteps
+        ? {
+            preparationSteps: overrides.preparationSteps.map((s) => ({
+              title: s.title,
+              category: s.category,
+              isMandatory: s.isMandatory,
+              instructions: s.instructions ?? null,
+            })),
+          }
+        : {}),
     },
   });
   await expectOk(res, 'apiCreateProduct');
@@ -252,6 +289,50 @@ export async function apiSetSettingParameter(
 ): Promise<void> {
   const res = await api.put(`/api/settings/parameters/${key}`, { data: { value: String(value) } });
   await expectOk(res, `apiSetSettingParameter(${key})`);
+}
+
+/**
+ * POST /api/collaborator-levels — nível ativo com valor base. É o que dá custo
+ * de equipe ao orçamento: sem nenhum nível o termo "Equipe" do custo estimado
+ * fica indisponível, a estimativa sai incompleta e a trava de margem não age
+ * (Etapa 120). Com um nível só, o custo da equipe é `teamSize × baseValue`.
+ */
+export async function apiCreateCollaboratorLevel(
+  api: APIRequestContext,
+  input: { baseValue: number; canLead?: boolean; order?: number; name?: string },
+): Promise<CreatedEntity> {
+  const res = await api.post('/api/collaborator-levels', {
+    data: {
+      name: input.name ?? `Nível E2E ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      order: input.order ?? 1,
+      baseValue: input.baseValue,
+      description: null,
+      canLead: input.canLead ?? true,
+      status: 'Active',
+    },
+  });
+  await expectOk(res, 'apiCreateCollaboratorLevel');
+  const body = await res.json();
+  return body.data ?? body;
+}
+
+/**
+ * POST /api/event-categories — categoria do tipo de evento no grupo dado
+ * (`Festa`, `Comunitario`…). Nome único por sufixo aleatório.
+ */
+export async function apiCreateEventCategory(
+  api: APIRequestContext,
+  input: { group: string; name?: string },
+): Promise<CreatedEntity & { name: string }> {
+  const res = await api.post('/api/event-categories', {
+    data: {
+      name: input.name ?? `Categoria E2E ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      group: input.group,
+    },
+  });
+  await expectOk(res, 'apiCreateEventCategory');
+  const body = await res.json();
+  return body.data ?? body;
 }
 
 /**
@@ -402,85 +483,6 @@ export async function apiSetEventDepartureLocation(
   await expectOk(res, 'apiSetEventDepartureLocation');
 }
 
-/** Grupo da categoria de evento (`EventCategoryGroup`). */
-export type EventCategoryGroup = 'Festa' | 'PontoFixo' | 'Corporativo' | 'Comunitario';
-
-/** POST /api/event-categories — categoria do grupo dado, com nome único. */
-export async function apiCreateEventCategory(
-  api: APIRequestContext,
-  group: EventCategoryGroup,
-  name = `Categoria E2E ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-): Promise<CreatedEntity & { name: string }> {
-  const res = await api.post('/api/event-categories', { data: { name, group } });
-  await expectOk(res, 'apiCreateEventCategory');
-  const body = await res.json();
-  return { ...(body.data ?? body), name };
-}
-
-/**
- * POST /api/collaborator-levels — nível com valor base. Sem nenhum, o custo de
- * equipe fica "indisponível" e a estimativa de custo do orçamento não fecha.
- */
-export async function apiCreateCollaboratorLevel(api: APIRequestContext, baseValue = 150): Promise<CreatedEntity> {
-  const res = await api.post('/api/collaborator-levels', {
-    data: { name: `Nível E2E ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, order: 50, baseValue },
-  });
-  await expectOk(res, 'apiCreateCollaboratorLevel');
-  const body = await res.json();
-  return body.data ?? body;
-}
-
-export type CommissionKind = 'FixedAmount' | 'Percentage' | 'Bonus';
-
-export interface CommissionInput {
-  collaboratorId: string;
-  kind: CommissionKind;
-  value: number;
-  notes?: string;
-}
-
-/** POST /api/events/:id/commissions sem afirmar o status — para o caso recusado. */
-export function apiTryCreateCommission(
-  api: APIRequestContext,
-  eventId: string,
-  input: CommissionInput,
-): Promise<APIResponse> {
-  return api.post(`/api/events/${eventId}/commissions`, {
-    data: { collaboratorId: input.collaboratorId, kind: input.kind, value: input.value, notes: input.notes ?? null },
-  });
-}
-
-/** POST /api/events/:id/commissions */
-export async function apiCreateCommission(
-  api: APIRequestContext,
-  eventId: string,
-  input: CommissionInput,
-): Promise<CreatedEntity> {
-  const res = await apiTryCreateCommission(api, eventId, input);
-  await expectOk(res, 'apiCreateCommission');
-  const body = await res.json();
-  return body.data ?? body;
-}
-
-/** POST /api/events/:id/expenses — despesa do evento (`Expense` de escopo `Event`). */
-export async function apiCreateEventExpense(
-  api: APIRequestContext,
-  eventId: string,
-  input: { amount: number; category: string; date: string; description?: string },
-): Promise<CreatedEntity> {
-  const res = await api.post(`/api/events/${eventId}/expenses`, {
-    data: {
-      amount: input.amount,
-      category: input.category,
-      date: input.date,
-      description: input.description ?? null,
-    },
-  });
-  await expectOk(res, 'apiCreateEventExpense');
-  const body = await res.json();
-  return body.data ?? body;
-}
-
 /** GET /api/clients — útil pra validar listagem após criar */
 export async function apiListClients(api: APIRequestContext): Promise<{ items: CreatedEntity[] }> {
   const res = await api.get('/api/clients');
@@ -513,6 +515,12 @@ export interface NotificationItem {
   contextEntityType: string | null;
   contextEntityId: string | null;
   createdAt: string;
+  /** PE-C (Etapa 253) — aviso com ciência; `acknowledgedAt` nulo = ciência pendente. */
+  requiresAcknowledgement?: boolean;
+  acknowledgedAt?: string | null;
+  /** Tipo do aviso de origem, nos avisos encaminhados (33/34). */
+  forwardedType?: string | null;
+  readAt?: string | null;
 }
 
 /** GET /api/notifications — as do usuário do contexto (o sino), as 50 mais recentes. */
