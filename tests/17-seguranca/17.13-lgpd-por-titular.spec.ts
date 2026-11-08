@@ -24,6 +24,13 @@ import {
   userIdByEmailDirect,
 } from '../../helpers/db-helper';
 import { fakeWhatsApp } from '../../helpers/fake-providers';
+import { tenantDayPlus } from '../../helpers/rain-plan';
+import {
+  apiBuildDayRoute,
+  apiListDayRoutes,
+  fakeAddressWithCoordinates,
+  setupReservedRental,
+} from '../../helpers/rental-preparation';
 import { apiErrorCodes, assertOk, readJson } from '../../helpers/response';
 import { setupAcceptedEvent } from '../../helpers/setup-flows';
 import { uniqueMobilePhone } from '../../helpers/test-data';
@@ -37,8 +44,12 @@ import {
 
 /**
  * Fluxo: 17.13 — LGPD por titular: buscar, exportar e anonimizar
- * Diagrama: — (cenários E162-E168 do registro e2e de
- * `docs/implementados/PLANO-SEGURANCA.md`, §14 SEG-L, Etapa 241)
+ * Diagrama: — (cenários E162-E168 e E172 do registro e2e de
+ * `docs/implementados/PLANO-SEGURANCA.md`, §14 SEG-L, Etapas 241 e 281)
+ *
+ * E172 (Etapa 281): o endereço de entrega da locação e a cópia dele na parada
+ * da rota do dia entram na anonimização; o endereço redigido mantém cidade, UF
+ * e país (decisão da Etapa 281 em `docs/modulos/back/Privacy.md`).
  *
  * O titular (família, criança, contato de WhatsApp) não tem login: chega pelo
  * telefone ou pelo e-mail. A tela é Configurações → Privacidade → "Titulares de
@@ -252,6 +263,32 @@ async function exportFromScreen(page: Page): Promise<Map<string, Buffer>> {
   const file = await download;
   const filePath = await file.path();
   return readZipEntries(readFileSync(filePath));
+}
+
+/** Confirma o aviso de irreversível e o pedido de senha (step-up) da anonimização. */
+async function anonymizeFromScreen(page: Page, password: string): Promise<void> {
+  await page.getByTestId('data-subjects-anonymize').click();
+  await page.getByTestId('confirm-ok').click();
+  await page.getByTestId('step-up-password').fill(password);
+  await page.getByTestId('step-up-submit').click();
+  await expect(page.getByTestId('data-subjects-anonymized')).toBeVisible();
+}
+
+interface RentalAddress {
+  zipCode: string | null;
+  street: string | null;
+  number: string | null;
+  complement: string | null;
+  neighborhood: string | null;
+  city: string | null;
+  state: string | null;
+}
+
+/** Endereço de entrega gravado na locação (`GET /api/rentals/{id}`). */
+async function apiRentalAddress(api: APIRequestContext, rentalId: string): Promise<RentalAddress> {
+  const res = await api.get(`/api/rentals/${rentalId}`);
+  await assertOk(res, 'GET /api/rentals/{id}');
+  return (await readJson<{ deliveryAddress: RentalAddress }>(res)).deliveryAddress;
 }
 
 /** Arquivo da key no storage local (`<root>/<bucket>/<key>`), ou null. */
@@ -688,5 +725,133 @@ test.describe('Fluxo 17.13 — LGPD por titular (SEG-L)', () => {
     expect(after.fileName, 'anexo sem nome').toBeNull();
     expect(after.caption, 'anexo sem legenda').toBeNull();
     expect(after.mediaUrl).not.toBe(key);
+  });
+
+  // ─── E172 — Endereço de entrega da locação e parada da rota (Etapa 281) ──
+  test('E172 @crud anonimizar pela tela o titular com locação e parada na rota do dia: a locação fica só com cidade e UF, a parada sai sem endereço; a locação de outro cliente e a de outra empresa com o mesmo telefone ficam intactas', async ({
+    authPage,
+    authApi,
+    tenant,
+  }) => {
+    test.setTimeout(240_000);
+    await apiCompleteOnboarding(authApi);
+    const tag = uid();
+    const date = tenantDayPlus(20);
+    const phone = newPhone();
+
+    // Titular com locação reservada (endereço com coordenada, vira parada da rota).
+    const subjectAddress = {
+      street: `Rua do Titular ${tag}`,
+      number: '271',
+      complement: `Casa ${tag}`,
+      neighborhood: `Bairro Titular ${tag}`,
+    };
+    const subjectClient = await apiCreateClient(authApi, { name: `Titular Locação ${tag}`, phone: phone.local });
+    const { rental } = await setupReservedRental(authApi, tenant.tenantId, {
+      clientId: subjectClient.id,
+      deliveryDate: date,
+      deliveryAddress: await fakeAddressWithCoordinates(subjectAddress),
+    });
+
+    // Outro cliente da mesma empresa, no mesmo dia e na mesma rota.
+    const otherAddress = { street: `Rua de Outro ${tag}`, number: '35', neighborhood: `Bairro Outro ${tag}` };
+    const { rental: otherRental } = await setupReservedRental(authApi, tenant.tenantId, {
+      deliveryDate: date,
+      deliveryAddress: await fakeAddressWithCoordinates(otherAddress),
+      enableAddOn: false,
+    });
+
+    await apiBuildDayRoute(authApi, { date, teamLabel: `Equipe ${tag}` });
+    const stopsOf = async (rentalId: string) =>
+      (await apiListDayRoutes(authApi, date)).flatMap((p) => p.stops).filter((s) => s.rentalId === rentalId);
+    const subjectStopsBefore = await stopsOf(rental.id);
+    expect(subjectStopsBefore.length, 'entrega e retirada do titular na rota do dia').toBe(2);
+    for (const stop of subjectStopsBefore) {
+      expect(`${stop.label} | ${stop.addressText}`, 'a parada copia o endereço do titular').toContain(
+        subjectAddress.neighborhood,
+      );
+    }
+
+    // O mesmo telefone na empresa B, com locação e endereço próprios.
+    const tenantB = await signupNewTenant();
+    const apiB = await createBearerApiContext(tenantB.accessToken);
+    try {
+      const addressB = { street: `Rua da Empresa B ${tag}`, number: '88', neighborhood: `Bairro B ${tag}` };
+      const clientB = await apiCreateClient(apiB, { name: `Titular B ${tag}`, phone: phone.local });
+      const { rental: rentalB } = await setupReservedRental(apiB, tenantB.tenantId, {
+        clientId: clientB.id,
+        deliveryDate: date,
+        deliveryAddress: await fakeAddressWithCoordinates(addressB),
+      });
+
+      // A busca pela tela conta a locação e as duas paradas.
+      await searchByPhone(authPage, phone.local);
+      await expect(authPage.getByTestId('data-subjects-found')).toBeVisible();
+      expect(await recordCountShown(authPage, 'rentals.deliveryAddresses'), 'endereço da locação').toBe(1);
+      expect(await recordCountShown(authPage, 'dayRouteStops'), 'paradas da rota do dia').toBe(2);
+
+      await anonymizeFromScreen(authPage, tenant.password);
+
+      // A locação do titular mostra só cidade e UF.
+      await authPage.goto(`/app/rentals/${rental.id}`);
+      await authPage.getByRole('tab', { name: 'Endereço', exact: true }).click({ timeout: 20_000 });
+      const summary = authPage.getByTestId('address-form-summary');
+      await expect(summary, 'o resumo segue com a cidade').toHaveValue(/Curitiba/);
+      const shown = await summary.inputValue();
+      expect(shown, 'o resumo segue com a UF').toContain('PR');
+      for (const leak of [subjectAddress.street, subjectAddress.neighborhood, subjectAddress.complement]) {
+        expect(shown, `o resumo sem "${leak}"`).not.toContain(leak);
+      }
+      expect(shown, 'o resumo sem o número').not.toMatch(/\b271\b/);
+
+      const manual = authPage.getByTestId('address-form-toggle-manual');
+      if ((await manual.count()) > 0) await manual.click();
+      await expect(authPage.getByTestId('address-form-city')).toHaveValue('Curitiba');
+      await expect(authPage.getByTestId('address-form-state')).toHaveValue('PR');
+      await expect(authPage.getByTestId('address-form-zipCode'), 'sem CEP').toHaveValue('');
+      await expect(authPage.getByTestId('address-form-number'), 'sem número').toHaveValue('');
+      await expect(authPage.getByTestId('address-form-complement'), 'sem complemento').toHaveValue('');
+      await expect(authPage.getByTestId('address-form-neighborhood'), 'sem bairro').toHaveValue('');
+      await expect(authPage.getByTestId('address-form-street'), 'sem a rua').not.toHaveValue(subjectAddress.street);
+
+      const redacted = await apiRentalAddress(authApi, rental.id);
+      expect(redacted.city).toBe('Curitiba');
+      expect(redacted.state).toBe('PR');
+      expect(JSON.stringify(redacted), 'a API também sem rua, número, complemento e bairro').not.toMatch(
+        new RegExp(`${subjectAddress.street}|${subjectAddress.neighborhood}|${subjectAddress.complement}|"271"`),
+      );
+
+      // As paradas do titular saem sem endereço, rótulo e coordenadas.
+      const subjectStopsAfter = await stopsOf(rental.id);
+      expect(subjectStopsAfter.length, 'as paradas ficam na rota').toBe(2);
+      for (const stop of subjectStopsAfter) {
+        const text = `${stop.label} | ${stop.addressText}`;
+        expect(text, 'parada sem a rua').not.toContain(subjectAddress.street);
+        expect(text, 'parada sem o bairro').not.toContain(subjectAddress.neighborhood);
+        expect(Number(stop.lat), 'parada sem latitude').toBe(0);
+        expect(Number(stop.lng), 'parada sem longitude').toBe(0);
+      }
+
+      // A locação e as paradas de outro cliente ficam intactas.
+      const other = await apiRentalAddress(authApi, otherRental.id);
+      expect(other.street, 'locação de outro cliente intacta').toBe(otherAddress.street);
+      expect(other.number).toBe(otherAddress.number);
+      expect(other.neighborhood).toBe(otherAddress.neighborhood);
+      const otherStops = await stopsOf(otherRental.id);
+      expect(otherStops.length).toBe(2);
+      for (const stop of otherStops) {
+        expect(`${stop.label} | ${stop.addressText}`, 'parada de outro cliente intacta').toContain(
+          otherAddress.neighborhood,
+        );
+      }
+
+      // A locação da empresa B, com o mesmo telefone, fica intacta.
+      const inB = await apiRentalAddress(apiB, rentalB.id);
+      expect(inB.street, 'locação da empresa B intacta').toBe(addressB.street);
+      expect(inB.number).toBe(addressB.number);
+      expect(inB.neighborhood).toBe(addressB.neighborhood);
+    } finally {
+      await apiB.dispose();
+    }
   });
 });

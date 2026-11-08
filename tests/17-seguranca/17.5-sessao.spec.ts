@@ -16,6 +16,7 @@ import { apiCompleteOnboarding } from '../../helpers/api-entities';
 import {
   backdateUserCreatedAtDirect,
   countMagicLinkTokensDirect,
+  enableFeatureFlagDirect,
   seedSuperAdminDirect,
   seedUserWithRoleDirect,
   setTenantOnboardedDirect,
@@ -35,8 +36,8 @@ import { msUntilTimeStep, totpCode, totpTimeStep } from '../../helpers/totp';
 
 /**
  * Fluxo: 17.5 — Sessão, MFA obrigatório e tokens de uso único
- * Diagrama: — (cenários E4, E5, E12, E40-E44, E53-E56 e E81-E86 do registro e2e
- * de `docs/implementados/PLANO-SEGURANCA.md`)
+ * Diagrama: — (cenários E4, E5, E12, E40-E44, E53-E56, E81-E86 e E174 do
+ * registro e2e de `docs/implementados/PLANO-SEGURANCA.md`)
  *
  * Fonte do comportamento: PLANO-SEGURANCA §4 (SEG-B, MFA exigido pelo servidor),
  * §11 (SEG-I, sessão e tokens de uso único) e §13 (SEG-K, sessão em cookie
@@ -1427,5 +1428,81 @@ test.describe('Fluxo 17.5 — Sessão, MFA obrigatório e tokens de uso único',
     } finally {
       await remembered.close();
     }
+  });
+
+  // §13 SEG-K (Etapa 281): o cache de features é da sessão; o logout o zera.
+  test('E174 @flow sair e entrar com um usuário de outra empresa na mesma aba: o menu e as rotas de add-on (locação) seguem as features da empresa nova', async ({
+    authPage,
+    authApi,
+    tenant,
+  }) => {
+    test.setTimeout(150_000);
+    await apiCompleteOnboarding(authApi);
+    enableFeatureFlagDirect(tenant.tenantId, 'feature_equipment_rental');
+
+    // Empresa B, sem o add-on de locação.
+    const other = await signupWithCompany();
+    const otherApi = await createBearerApiContext(other.accessToken);
+    try {
+      await apiCompleteOnboarding(otherApi);
+    } finally {
+      await otherApi.dispose();
+    }
+
+    const rentalsItem = authPage.getByTestId('nav-sub-/app/rentals/list');
+    /** "Equipamentos" → "Locações" pelo menu: navegação do roteador, sem recarregar a página. */
+    // O submenu fechado continua no DOM com caixa (o `isVisible` diz sim), mas
+    // coberto pelo botão do grupo: quem diz se está aberto é a classe `open`.
+    const rentalsGroup = authPage.getByTestId('nav-group-Equipamentos');
+    const openRentalsFromMenu = async (): Promise<void> => {
+      await expect(authPage.getByTestId('nav-group-toggle-Equipamentos')).toBeVisible();
+      if (!/\bopen\b/.test((await rentalsGroup.getAttribute('class')) ?? '')) {
+        await authPage.getByTestId('nav-group-toggle-Equipamentos').click();
+      }
+      await expect(rentalsGroup).toHaveClass(/\bopen\b/);
+      await rentalsItem.click();
+    };
+    const logoutAndLogin = async (email: string, password: string, companyName: string): Promise<void> => {
+      await authPage.getByTestId('user-menu-trigger').click();
+      await authPage.getByTestId('user-menu-logout').click();
+      await authPage.waitForURL(/\/auth\/login/);
+      await fillLogin(authPage, email, password);
+      await authPage.waitForURL(/\/app(\/|$)/);
+      await expect(authPage.getByTestId('tenant-name')).toHaveText(companyName);
+    };
+
+    // Empresa A, com o add-on: o menu abre a lista de locações.
+    await authPage.goto('/app');
+    await expect(authPage.getByTestId('tenant-name')).toHaveText(tenant.companyName);
+    await openRentalsFromMenu();
+    await expect(authPage).toHaveURL(/\/app\/rentals\/list/);
+    await expect(authPage.getByTestId('rentals-list-page')).toBeVisible({ timeout: 20_000 });
+
+    // Marca o documento: a troca de usuário tem de acontecer sem recarregar a
+    // página (o boot, que recarregaria as features, não roda de novo).
+    await authPage.evaluate(() => {
+      (window as unknown as { __e2eSameDocument?: boolean }).__e2eSameDocument = true;
+    });
+    const sameDocument = () =>
+      authPage.evaluate(() => (window as unknown as { __e2eSameDocument?: boolean }).__e2eSameDocument === true);
+
+    // Sai e entra com o dono da empresa B na mesma aba: a rota de locação fica
+    // bloqueada pelo add-on da empresa nova, sem herdar o da anterior.
+    await logoutAndLogin(other.email, other.password, other.companyName);
+    expect(await sameDocument(), 'a troca de usuário não recarregou a página').toBe(true);
+    await openRentalsFromMenu();
+    await expect(authPage, 'locação bloqueada para a empresa sem o add-on').toHaveURL(
+      /\/app\/billing\/blocked\?.*feature=feature_equipment_rental/,
+      { timeout: 20_000 },
+    );
+    await expect(authPage.getByTestId('module-blocked')).toBeVisible();
+    await expect(authPage.getByTestId('rentals-list-page')).toHaveCount(0);
+
+    // E de volta à empresa A: as features dela, não o bloqueio da B.
+    await logoutAndLogin(tenant.email, tenant.password, tenant.companyName);
+    expect(await sameDocument(), 'a volta também sem recarregar a página').toBe(true);
+    await openRentalsFromMenu();
+    await expect(authPage).toHaveURL(/\/app\/rentals\/list/);
+    await expect(authPage.getByTestId('rentals-list-page')).toBeVisible({ timeout: 20_000 });
   });
 });

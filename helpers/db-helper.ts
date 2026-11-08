@@ -142,6 +142,47 @@ export function seedApprovedWhatsAppTemplateDirect(input: {
   return id;
 }
 
+/**
+ * O template APROVADO do catálogo associado a um disparo automático
+ * (`WhatsAppTemplateTrigger`, ex. `CollaboratorNoticeForwarded`), que o
+ * `WhatsAppAutomaticDispatcher` usa com a janela de 24 h fechada. O catálogo é
+ * da plataforma e o banco só aceita UM template vivo por trigger (índice único
+ * parcial em `Trigger`), então o helper devolve o que já existe (aprovando-o) e
+ * só cria quando não há nenhum. O envio pelo canal do tenant ainda exige o
+ * vínculo na WABA dele (`seedConnectedWhatsappTenantDirect(tenant, [id])`).
+ *
+ * [ALERTA] O template fica no banco do E2E depois do spec: em tenant SEM o
+ * vínculo, um disparo do mesmo trigger com a janela fechada passa de "sem
+ * modelo" a falha de canal (`WhatsAppOutbound.TemplateNotInWaba`); nos dois
+ * casos o WhatsApp não sai. Nenhum spec afirma o motivo do não envio hoje.
+ *
+ * [ALERTA] `body` em ASCII: o `psql.exe` recebe o `-c` na página de código
+ * ANSI do Windows, e "Olá" chega como byte inválido em UTF-8 (o INSERT falha).
+ */
+export function ensureTriggerWhatsAppTemplateDirect(input: {
+  trigger: string;
+  namePrefix: string;
+  body: string;
+  variables: string[];
+}): { id: string; name: string } {
+  const safeTrigger = input.trigger.replace(/'/g, "''");
+  const existing = execSql(`
+    SELECT "Id"::text || '|' || "Name" FROM "WhatsAppTemplates"
+     WHERE "Trigger" = '${safeTrigger}' AND "IsDeleted" = false
+       AND "Status" IN ('Draft', 'Pending', 'Approved')
+     ORDER BY "CreatedAt" LIMIT 1;
+  `);
+  if (existing) {
+    const [id, name] = existing.split('|');
+    execSql(`UPDATE "WhatsAppTemplates" SET "Status" = 'Approved', "UpdatedAt" = now() WHERE "Id" = '${id}';`);
+    return { id: id!, name: name! };
+  }
+  const name = `${input.namePrefix}_${Date.now().toString(36)}`;
+  const id = seedApprovedWhatsAppTemplateDirect({ name, body: input.body, variables: input.variables });
+  execSql(`UPDATE "WhatsAppTemplates" SET "Trigger" = '${safeTrigger}' WHERE "Id" = '${id}';`);
+  return { id, name };
+}
+
 /** Id do template do catálogo pelo nome (`orcamento_pronto` é semeado pelo back em E2E). */
 export function whatsAppTemplateIdByNameDirect(name: string): string {
   const safeName = name.replace(/'/g, "''");

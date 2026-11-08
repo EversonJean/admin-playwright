@@ -7,16 +7,22 @@ import {
   apiCreateCollaborator,
   apiListNotifications,
 } from '../../helpers/api-entities';
-import { enableFeatureFlagDirect } from '../../helpers/db-helper';
-import { fakeGoogleMaps, uniquePointNear } from '../../helpers/fake-providers';
+import {
+  enableFeatureFlagDirect,
+  ensureTriggerWhatsAppTemplateDirect,
+  seedConnectedWhatsappTenantDirect,
+} from '../../helpers/db-helper';
 import { tenantDayPlus } from '../../helpers/rain-plan';
 import {
+  DayRoutePlan,
   RENTAL_TRANSPORT_KEY,
+  apiBuildDayRoute,
   apiCreateVehicle,
   apiGetEventChecklist,
   apiGetRentalLogistics,
   apiPutRentalLogistics,
   completeLegs,
+  fakeAddressWithCoordinates,
   notifyRentalCrew,
   openRentalTransportTab,
   putRentalLogistics,
@@ -33,6 +39,17 @@ import {
   setupAcceptedEvent,
 } from '../../helpers/setup-flows';
 import { fakeAddress } from '../../helpers/test-data';
+import {
+  apiConversationIdByPhone,
+  apiDailyQuota,
+  enableWhatsAppFeaturesDirect,
+  fakeMessagesTo,
+  fakeTextsTo,
+  openSendTemplateDialog,
+  receiveInbound,
+  uid,
+  uniquePhoneE164,
+} from '../../helpers/whatsapp-flow';
 
 /**
  * Fluxo: 16 — Transporte dos brinquedos (PLANO-PREPARACAO-DE-EQUIPAMENTOS, PE-H)
@@ -56,6 +73,12 @@ import { fakeAddress } from '../../helpers/test-data';
  * mão com o texto que aponta a aba Transporte e some quando a última locação é
  * cancelada.
  *
+ * E173 (PLANO-SEGURANCA §14 item 1 e §5 item 3, Etapa 281): o aviso de
+ * transporte gravado no sino do Portal diz "ao endereço de entrega da locação",
+ * sem rua nem número (anonimização do titular); o WhatsApp, que o colaborador
+ * precisa para a entrega, leva o endereço; o envio pelo template (janela de
+ * 24 h fechada) conta na cota diária que a tela de envio de WhatsApp mostra.
+ *
  * [NOTA] Revisão integrada do plano (2026-10-25, linha 5 do plano e
  * `docs/modulos/back/Notifications.md`): o aviso de transporte nunca é gravado
  * como notificação 39. O colaborador recebe um 33 `NoticeForwarded` com
@@ -69,46 +92,6 @@ const TRANSPORT = 'RentalTransportAssigned';
 /** Os avisos de transporte (33/34 com `forwardedType` de transporte) do usuário. */
 async function transportNotices(api: APIRequestContext, type: string): Promise<NotificationItem[]> {
   return (await apiListNotifications(api)).filter((n) => n.type === type && n.forwardedType === TRANSPORT);
-}
-
-interface DayRoutePlan {
-  id: string;
-  teamLabel: string;
-  vehicleId: string | null;
-  stops: Array<{ kind: string; rentalId: string | null }>;
-  unresolvedStops: Array<{ kind: string; refId: string }>;
-}
-
-/** POST /api/routing/day-plans com origem avulsa (coordenada do fake) e, opcional, o veículo. */
-async function apiBuildDayRoute(
-  api: APIRequestContext,
-  input: { date: string; teamLabel: string; vehicleId?: string | null },
-): Promise<DayRoutePlan> {
-  const places = await fakeGoogleMaps.places();
-  const origin = uniquePointNear(places.centro);
-  const res = await api.post('/api/routing/day-plans', {
-    data: {
-      date: input.date,
-      teamLabel: input.teamLabel,
-      originKind: 'Custom',
-      originStockLocationId: null,
-      returnsToOrigin: false,
-      extraStops: [],
-      customOriginLabel: 'Galpão E2E',
-      customOriginLat: origin.lat,
-      customOriginLng: origin.lng,
-      vehicleId: input.vehicleId ?? null,
-    },
-  });
-  await assertOk(res, 'POST /api/routing/day-plans');
-  return readJson<DayRoutePlan>(res);
-}
-
-/** Endereço de entrega com coordenada única perto de um ponto do fake (vira parada da rota). */
-async function addressWithCoordinates(): Promise<Record<string, unknown>> {
-  const places = await fakeGoogleMaps.places();
-  const point = uniquePointNear(places.batel);
-  return { ...fakeAddress(), latitude: point.lat, longitude: point.lng };
 }
 
 function rentalIdsOf(plan: DayRoutePlan): string[] {
@@ -326,16 +309,16 @@ test.describe('Fluxo 16 — Transporte dos brinquedos', () => {
     // A e B no endereço com coordenada; C é avulsa e fica sem plano.
     const a = await setupReservedRental(authApi, tenant.tenantId, {
       deliveryDate: date,
-      deliveryAddress: await addressWithCoordinates(),
+      deliveryAddress: await fakeAddressWithCoordinates(),
     });
     const b = await setupReservedRental(authApi, tenant.tenantId, {
       deliveryDate: date,
-      deliveryAddress: await addressWithCoordinates(),
+      deliveryAddress: await fakeAddressWithCoordinates(),
       enableAddOn: false,
     });
     const c = await setupReservedRental(authApi, tenant.tenantId, {
       deliveryDate: date,
-      deliveryAddress: await addressWithCoordinates(),
+      deliveryAddress: await fakeAddressWithCoordinates(),
       enableAddOn: false,
     });
 
@@ -415,5 +398,134 @@ test.describe('Fluxo 16 — Transporte dos brinquedos', () => {
       (await apiGetEventChecklist(authApi, eventId)).filter((i) => i.systemKey === RENTAL_TRANSPORT_KEY),
       'sem locação viva, sem o item',
     ).toHaveLength(0);
+  });
+
+  test('@flow E173: the crew notice in the Portal says "ao endereço de entrega da locação" without street or number; the WhatsApp text carries the address; the template send counts in the daily WhatsApp quota', async ({
+    authApi,
+    authPage,
+    browser,
+    tenant,
+  }) => {
+    test.setTimeout(300_000);
+    await apiCompleteOnboarding(authApi);
+    enableWhatsAppFeaturesDirect(tenant.tenantId);
+
+    // O aviso encaminhado com a janela fechada sai pelo template do trigger
+    // `CollaboratorNoticeForwarded`, aprovado no catálogo e na WABA da empresa.
+    // Corpo em ASCII: o `psql` do Windows recebe o argumento em ANSI e o acento
+    // vira byte inválido em UTF-8.
+    const template = ensureTriggerWhatsAppTemplateDirect({
+      trigger: 'CollaboratorNoticeForwarded',
+      namePrefix: 'aviso_encaminhado_e2e',
+      body: 'Ola, {{1}}! Voce recebeu um aviso: {{2}}. Veja no Portal: {{3}}',
+      variables: ['nome', 'titulo', 'link'],
+    });
+    const channel = seedConnectedWhatsappTenantDirect(tenant.tenantId, [template.id]);
+
+    // Endereço só desta locação, para procurar rua e número nos textos.
+    const tag = uid();
+    const street = `Rua do Transporte ${tag}`;
+    const number = String(100 + Math.floor(Math.random() * 900));
+    const date = tenantDayPlus(20);
+    const { rental } = await setupReservedRental(authApi, tenant.tenantId, {
+      deliveryDate: date,
+      deliveryAddress: { ...fakeAddress(), street, number },
+    });
+
+    // O motorista escreveu para o número da empresa (janela aberta: texto
+    // livre); o ajudante não (janela fechada: template).
+    const vehicle = await apiCreateVehicle(authApi);
+    const driverPhone = uniquePhoneE164();
+    const helperPhone = uniquePhoneE164();
+    const driver = await apiCreateCollaborator(authApi, { name: `Motorista ${tag}`, phone: driverPhone });
+    const helper = await apiCreateCollaborator(authApi, { name: `Ajudante ${tag}`, phone: helperPhone });
+    const driverPortal = await loginPortalCollaborator(tenant.tenantId, driver.id);
+    const helperPortal = await loginPortalCollaborator(tenant.tenantId, helper.id);
+    const sessions: RoleSession[] = [driverPortal, helperPortal];
+
+    try {
+      await receiveInbound(channel.phoneNumberId, driverPhone, 'Oi, sou o motorista');
+      const driverConversationId = await apiConversationIdByPhone(authApi, driverPhone);
+      await apiPutRentalLogistics(
+        authApi,
+        rental.id,
+        completeLegs({ date, vehicleId: vehicle.id, driverId: driver.id, helperIds: [helper.id] }),
+      );
+
+      const before = await apiDailyQuota(authApi);
+      const since = new Date().toISOString();
+      const notified = await notifyRentalCrew(authApi, rental.id, ['Portal', 'WhatsApp']);
+      await assertOk(notified, 'notify-crew');
+      const result = await readJson<{
+        sentCount: number;
+        notices: Array<{ collaboratorId: string; channels: Array<{ channel: string; delivered: boolean }> }>;
+      }>(notified);
+      expect(result.sentCount, 'motorista e ajudante avisados').toBe(2);
+      for (const member of [driver, helper]) {
+        const notice = result.notices.find((n) => n.collaboratorId === member.id);
+        expect(
+          notice?.channels.find((c) => c.channel === 'WhatsApp')?.delivered,
+          `WhatsApp entregue a ${member.id === driver.id ? 'motorista' : 'ajudante'}`,
+        ).toBe(true);
+      }
+
+      // §14 item 1: o aviso gravado no sino do Portal vai sem o endereço.
+      for (const portal of sessions) {
+        await expect.poll(async () => (await transportNotices(portal.api, 'NoticeForwarded')).length).toBe(1);
+        const notice = (await transportNotices(portal.api, 'NoticeForwarded'))[0]!;
+        expect(notice.message, 'o aviso diz para onde sem dizer o endereço').toContain(
+          'ao endereço de entrega da locação',
+        );
+        expect(notice.message, 'sem a rua').not.toContain(street);
+        expect(`${notice.title} ${notice.message}`, 'sem rua e número juntos').not.toContain(`${street}, ${number}`);
+      }
+
+      const driverNotice = (await transportNotices(driverPortal.api, 'NoticeForwarded'))[0]!;
+      const view = await openSessionPage(browser, driverPortal.tokens);
+      try {
+        await view.page.goto('/portal/notifications');
+        const card = view.page.getByTestId(`portal-notification-${driverNotice.id}`);
+        await expect(card).toBeVisible({ timeout: 20_000 });
+        await expect(card).toContainText('ao endereço de entrega da locação');
+        await expect(card, 'a tela do Portal sem a rua').not.toContainText(street);
+      } finally {
+        await view.context.close();
+      }
+
+      // O WhatsApp (fake da Meta) leva o endereço: o texto livre do motorista.
+      await expect
+        .poll(async () => (await fakeTextsTo(driverPhone, since)).join('\n'), {
+          message: 'texto do aviso ao motorista no WhatsApp',
+        })
+        .toContain(rental.rentalNumber);
+      const driverText = (await fakeTextsTo(driverPhone, since)).join('\n');
+      expect(driverText, 'o WhatsApp leva rua e número').toContain(`${street}, ${number}`);
+
+      // O ajudante, com a janela fechada, recebe o template pelo número da empresa.
+      await expect
+        .poll(
+          async () =>
+            (await fakeMessagesTo(helperPhone, since)).filter(
+              (e) =>
+                e.path === `/${channel.phoneNumberId}/messages` &&
+                (e.body as { type?: string } | null)?.type === 'template',
+            ).length,
+          { message: 'template ao ajudante pelo número da empresa' },
+        )
+        .toBe(1);
+
+      // §5 item 3: o template conta na cota diária; o texto livre na janela não.
+      const after = await apiDailyQuota(authApi);
+      expect(after.used, 'um envio de template a mais na cota do dia').toBe(before.used + 1);
+      expect(after.remaining).toBe(after.limit - after.used);
+
+      // A tela de envio de WhatsApp mostra a cota com o envio do aviso.
+      await openSendTemplateDialog(authPage, driverConversationId);
+      const quota = authPage.getByTestId('send-whatsapp-quota');
+      await expect(quota).toContainText(`Envios hoje: ${after.used} de ${after.limit}`);
+      await expect(authPage.getByTestId('send-whatsapp-quota-remaining')).toHaveText(String(after.remaining));
+    } finally {
+      for (const s of sessions) await s.api.dispose();
+    }
   });
 });

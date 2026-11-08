@@ -8,6 +8,7 @@ import {
 } from './api-entities';
 import { apiCompleteEvent, apiStartEvent } from './api-event-flow';
 import { enableFeatureFlagDirect } from './db-helper';
+import { fakeGoogleMaps, uniquePointNear } from './fake-providers';
 import { fakeAddress } from './test-data';
 import { assertOk, readJson } from './response';
 import { setupConfirmedPortalCollaborator, tenantDayPlus, uniqueSuffix } from './rain-plan';
@@ -632,6 +633,71 @@ export async function rentalTransportItem(
   eventId: string,
 ): Promise<EventChecklistItem | undefined> {
   return (await apiGetEventChecklist(api, eventId)).find((i) => i.systemKey === RENTAL_TRANSPORT_KEY);
+}
+
+// ─────────────────────────── rota do dia (Routing) ───────────────────────────
+
+export interface DayRouteStop {
+  id: string;
+  kind: string;
+  rentalId: string | null;
+  label: string;
+  addressText: string;
+  lat: number;
+  lng: number;
+}
+
+export interface DayRoutePlan {
+  id: string;
+  teamLabel: string;
+  vehicleId: string | null;
+  stops: DayRouteStop[];
+  unresolvedStops: Array<{ kind: string; refId: string }>;
+}
+
+/**
+ * Endereço de entrega com coordenada única perto de um ponto do fake (vira
+ * parada da rota do dia). `overrides` troca rua, número, bairro… do
+ * `fakeAddress`, para o spec procurar um texto só dele.
+ */
+export async function fakeAddressWithCoordinates(
+  overrides: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+  const places = await fakeGoogleMaps.places();
+  const point = uniquePointNear(places.batel);
+  return { ...fakeAddress(), ...overrides, latitude: point.lat, longitude: point.lng };
+}
+
+/** POST /api/routing/day-plans com origem avulsa (coordenada do fake) e, opcional, o veículo. */
+export async function apiBuildDayRoute(
+  api: APIRequestContext,
+  input: { date: string; teamLabel: string; vehicleId?: string | null },
+): Promise<DayRoutePlan> {
+  const places = await fakeGoogleMaps.places();
+  const origin = uniquePointNear(places.centro);
+  const res = await api.post('/api/routing/day-plans', {
+    data: {
+      date: input.date,
+      teamLabel: input.teamLabel,
+      originKind: 'Custom',
+      originStockLocationId: null,
+      returnsToOrigin: false,
+      extraStops: [],
+      customOriginLabel: 'Galpão E2E',
+      customOriginLat: origin.lat,
+      customOriginLng: origin.lng,
+      vehicleId: input.vehicleId ?? null,
+    },
+  });
+  await assertOk(res, 'POST /api/routing/day-plans');
+  return readJson<DayRoutePlan>(res);
+}
+
+/** GET /api/routing/day-plans?date= — as rotas montadas no dia. */
+export async function apiListDayRoutes(api: APIRequestContext, date: string): Promise<DayRoutePlan[]> {
+  const res = await api.get(`/api/routing/day-plans?date=${date}`);
+  await assertOk(res, 'GET /api/routing/day-plans');
+  return readJson<DayRoutePlan[]>(res);
 }
 
 // ─────────────────────────── avarias (PE-F e PE-I) ───────────────────────────
