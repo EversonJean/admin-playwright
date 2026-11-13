@@ -23,6 +23,8 @@ import * as state from './state.js';
  */
 
 const PORT = Number(process.env.FAKE_CLICKSIGN_PORT ?? 1511);
+// Back que recebe o webhook: o do .env deste clone (o playwright.config.ts passa o ambiente ao fake).
+const BACK_URL = process.env.BACK_URL ?? 'https://localhost:1501';
 const WEBHOOK_SECRET =
   process.env.FAKE_CLICKSIGN_WEBHOOK_SECRET ?? 'fake-clicksign-webhook-secret-e2e';
 
@@ -174,7 +176,7 @@ await createFakeServer({
       providerSignerKey?: string;
       occurredAt?: string;
       reason?: string;
-      /** Override URL (default https://localhost:1501/api/webhooks/clicksign) */
+      /** Override URL (default `${BACK_URL}/api/webhooks/clicksign`) */
       backUrl?: string;
     };
 
@@ -204,7 +206,7 @@ await createFakeServer({
       const sig = createHmac('sha256', WEBHOOK_SECRET).update(rawBody).digest('hex');
 
       return {
-        url: body.backUrl ?? 'https://localhost:1501/api/webhooks/clicksign',
+        url: body.backUrl ?? `${BACK_URL}/api/webhooks/clicksign`,
         payload,
         headers: { 'X-Clicksign-Signature': `sha256=${sig}` },
       };

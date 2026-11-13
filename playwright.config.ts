@@ -1,14 +1,17 @@
 import { defineConfig, devices } from '@playwright/test';
 import * as dotenv from 'dotenv';
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
+const DEFAULT_BACK_URL = 'https://localhost:1501';
 const FRONT_URL = process.env.FRONT_URL ?? 'http://localhost:4200';
 // Painel Super Admin — build/origem próprios desde SEPARACAO-SUPER-ADMIN.md
 // (project `super-admin` do workspace Angular, porta 4201 em dev).
 const SUPER_ADMIN_URL = process.env.SUPER_ADMIN_URL ?? 'http://localhost:4201';
-const BACK_URL = process.env.BACK_URL ?? 'https://localhost:1501';
+const BACK_URL = process.env.BACK_URL ?? DEFAULT_BACK_URL;
 const SKIP_WEBSERVER = process.env.SKIP_WEBSERVER === 'true';
 
 const BACK_CONNECTION_STRING =
@@ -17,6 +20,35 @@ const BACK_CONNECTION_STRING =
 
 const BACK_PROJECT_PATH = process.env.BACK_PROJECT_PATH ?? '../admin-backend/src/AdminBackend.Api';
 const FRONT_PROJECT_PATH = process.env.FRONT_PROJECT_PATH ?? '../admin-frontend';
+
+// [DECISAO] Segundo clone na mesma maquina: o .env (gitignored) troca BACK_URL,
+// FRONT_URL, SUPER_ADMIN_URL e o banco, e a suite sobe a stack inteira nessas
+// portas, sem tocar na do outro clone (que segue em 1501/4200/4201). Sem .env,
+// nada muda: os comandos abaixo saem identicos aos de sempre.
+// O proxy.conf.json versionado aponta para a 1501; com outro back, o dev server
+// recebe uma copia dele com o target trocado, gravada fora do repo.
+function e2eProxyConfig(): string | null {
+  if (BACK_URL === DEFAULT_BACK_URL) return null;
+  const source = path.resolve(__dirname, FRONT_PROJECT_PATH, 'proxy.conf.json');
+  const routes = JSON.parse(fs.readFileSync(source, 'utf8')) as Record<string, { target: string }>;
+  for (const route of Object.values(routes)) route.target = BACK_URL;
+  const file = path.join(os.tmpdir(), `admin-e2e-proxy-${new URL(BACK_URL).port}.json`);
+  const content = JSON.stringify(routes, null, 2);
+  // a config e avaliada de novo em cada worker: so grava se mudou
+  if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== content) fs.writeFileSync(file, content);
+  return file;
+}
+const E2E_PROXY_CONFIG = SKIP_WEBSERVER ? null : e2eProxyConfig();
+
+// Argumentos extras do `ng serve`: porta, quando o .env troca, e o proxy acima.
+function ngServeArgs(url: string, defaultPort: string): string {
+  const port = new URL(url).port;
+  const args = [
+    ...(port !== defaultPort ? ['--port', port] : []),
+    ...(E2E_PROXY_CONFIG ? ['--proxy-config', `"${E2E_PROXY_CONFIG}"`] : []),
+  ];
+  return args.length ? ` -- ${args.join(' ')}` : '';
+}
 
 export default defineConfig({
   testDir: './tests',
@@ -130,13 +162,17 @@ export default defineConfig({
           timeout: 180_000,
           reuseExistingServer: !process.env.CI,
           ignoreHTTPSErrors: true,
+          // Vencem o appsettings.E2E.json porque o Program.cs re-adiciona as
+          // variaveis de ambiente depois dele (so no ambiente E2E).
           env: {
             ConnectionStrings__Default: BACK_CONNECTION_STRING,
+            Kestrel__Endpoints__Https__Url: BACK_URL,
+            Email__FrontBaseUrl: FRONT_URL,
           },
         },
         {
           name: 'admin-frontend',
-          command: 'npm start',
+          command: `npm start${ngServeArgs(FRONT_URL, '4200')}`,
           cwd: FRONT_PROJECT_PATH,
           url: FRONT_URL,
           timeout: 180_000,
@@ -144,7 +180,7 @@ export default defineConfig({
         },
         {
           name: 'super-admin',
-          command: 'npm run start:super-admin',
+          command: `npm run start:super-admin${ngServeArgs(SUPER_ADMIN_URL, '4201')}`,
           cwd: FRONT_PROJECT_PATH,
           url: SUPER_ADMIN_URL,
           timeout: 180_000,

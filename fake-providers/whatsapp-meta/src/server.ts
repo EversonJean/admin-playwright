@@ -46,6 +46,8 @@ import * as state from './state.js';
  */
 
 const PORT = Number(process.env.FAKE_WHATSAPP_PORT ?? 1512);
+// Back que recebe o webhook: o do .env deste clone (o playwright.config.ts passa o ambiente ao fake).
+const BACK_URL = process.env.BACK_URL ?? 'https://localhost:1501';
 const APP_SECRET =
   process.env.FAKE_WHATSAPP_APP_SECRET ?? 'fake-whatsapp-app-secret-e2e';
 /** `WhatsApp:ApiKey` do `appsettings.E2E.json`: nunca serve para a WABA do tenant. */
@@ -444,7 +446,7 @@ await createFakeServer({
        * em workers paralelos roubam o canal um do outro.
        */
       phoneNumberId?: string;
-      /** Override URL (default https://localhost:1501/api/webhooks/whatsapp) */
+      /** Override URL (default `${BACK_URL}/api/webhooks/whatsapp`) */
       backUrl?: string;
     };
 
@@ -455,7 +457,7 @@ await createFakeServer({
         const rawBody = JSON.stringify(body.payload);
         const sig = createHmac('sha256', APP_SECRET).update(rawBody).digest('hex');
         return {
-          url: body.backUrl ?? 'https://localhost:1501/api/webhooks/whatsapp',
+          url: body.backUrl ?? `${BACK_URL}/api/webhooks/whatsapp`,
           payload: body.payload,
           headers: { 'X-Hub-Signature-256': `sha256=${sig}` },
         };
@@ -509,7 +511,7 @@ await createFakeServer({
       const sig = createHmac('sha256', APP_SECRET).update(rawBody).digest('hex');
 
       return {
-        url: body.backUrl ?? 'https://localhost:1501/api/webhooks/whatsapp',
+        url: body.backUrl ?? `${BACK_URL}/api/webhooks/whatsapp`,
         payload,
         headers: { 'X-Hub-Signature-256': `sha256=${sig}` },
       };

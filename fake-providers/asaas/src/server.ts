@@ -18,6 +18,8 @@ import * as state from './state.js';
  */
 
 const PORT = Number(process.env.FAKE_ASAAS_PORT ?? 1510);
+// Back que recebe o webhook: o do .env deste clone (o playwright.config.ts passa o ambiente ao fake).
+const BACK_URL = process.env.BACK_URL ?? 'https://localhost:1501';
 
 await createFakeServer({
   name: 'asaas',
@@ -144,7 +146,7 @@ await createFakeServer({
        * chamada. Usar valor fixo entre 2 triggers permite testar idempotencia
        * do processor do back (mesmo evt_id nao deve duplicar efeito). */
       eventId?: string;
-      /** URL do back pra disparar (default https://localhost:1501/api/webhooks/asaas) */
+      /** URL do back pra disparar (default `${BACK_URL}/api/webhooks/asaas`) */
       backUrl?: string;
       /** asaas-access-token quando o back valida (config WebhookToken) */
       accessToken?: string;
@@ -204,7 +206,7 @@ await createFakeServer({
       if (body.accessToken) headers['asaas-access-token'] = body.accessToken;
 
       return {
-        url: body.backUrl ?? 'https://localhost:1501/api/webhooks/asaas',
+        url: body.backUrl ?? `${BACK_URL}/api/webhooks/asaas`,
         payload,
         headers,
       };

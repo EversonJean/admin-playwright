@@ -33,10 +33,22 @@ O back sobe com `--launch-profile e2e` e `appsettings.E2E.json` aponta cada inte
 [ALERTA] **`reuseExistingServer` + o segundo clone = o e2e roda contra o codigo
 ERRADO, em silencio.** Existem dois clones deste workspace na maquina (ver o
 `CLAUDE.md` da raiz). Em dev o `playwright.config.ts` usa
-`reuseExistingServer: !process.env.CI`: se JA houver algo respondendo em 1501 ou
-4200, o Playwright **reusa** em vez de subir o deste clone. Se o que estiver la
+`reuseExistingServer: !process.env.CI`: se JA houver algo respondendo nas portas
+do e2e, o Playwright **reusa** em vez de subir o deste clone. Se o que estiver la
 for o outro clone, a suite exercita a outra branch — e um verde ali nao prova
 nada sobre o que voce acabou de escrever.
+
+[DECISAO] **Cada clone roda o e2e nas proprias portas e no proprio banco**
+(2026-11-09). O `.env` (gitignored, modelo no `.env.example`) troca `BACK_URL`,
+`FRONT_URL`, `SUPER_ADMIN_URL`, `PG_DATABASE` e `BACK_CONNECTION_STRING`; sem ele
+valem 1501/4200/4201 e `adminbackend`. Com outro back, o `playwright.config.ts`
+sobe front e super-admin com `--port` e um proxy gerado do `proxy.conf.json`
+(target trocado, gravado no `%TEMP%`), e passa ao back `Kestrel__Endpoints__Https__Url`,
+`ConnectionStrings__Default` e `Email__FrontBaseUrl`; os fakes que disparam
+webhook leem o `BACK_URL` do ambiente. O clone `new-features` usa back 1503, front
+4310, super-admin 4311 e o banco `new-features-e2e` (fora tambem das portas de dev
+dele, 1502/4300). Os fakes (1510-1517) sao comuns: a fila da maquina nunca roda
+duas suites juntas. O `run-tests.js` le o mesmo `.env` para saber que portas conferir.
 
 O sintoma NAO diz isso. O outro clone roda `appsettings.Development.json` (banco
 `admin-dev`) enquanto o `helpers/db-helper.ts` escreve em `adminbackend` (o
@@ -47,23 +59,23 @@ problema do teste; e clone trocado.
 Antes de rodar, confira **de quem** sao os processos:
 
 ```
-powershell -c "Get-NetTCPConnection -LocalPort 1501,4200 -State Listen | ForEach-Object { (Get-CimInstance Win32_Process -Filter \"ProcessId = $($_.OwningProcess)\").CommandLine }"
+node .claude/scripts/run-tests.js e2e --check
 ```
 
-O caminho tem de conter o nome DESTE clone. Se nao, derrube o processo — a skill
-`start-app` da raiz e quem decide qual dos dois sobe.
+O script le a linha de comando do dono de cada porta: o caminho tem de conter o
+nome DESTE clone. Se nao, ele para; nunca derrube processo do outro clone — dê a
+este clone portas proprias no `.env` (decisao acima).
 
-[ALERTA] **No perfil `e2e` a porta e a base NAO se trocam por variavel de
-ambiente.** O `Program.cs` adiciona o `appsettings.E2E.json` depois das env vars,
-entao `Kestrel__Endpoints__Https__Url` e `ConnectionStrings__Default` perdem para
-ele: o back E2E sobe sempre na 1501 com a base `adminbackend`, e o `MigrateAsync`
-do boot aplica as migrations do working tree NESSA base. A porta 1502 e a base
-`new-features` da skill `start-app` valem so para Development (que tem
-`AuthPermitLimit` 5 e nao aguenta a suite). O `BACK_CONNECTION_STRING` do
-`playwright.config.ts` tambem nao tem efeito, pelo mesmo motivo.
+[NOTA] No perfil `e2e` o `Program.cs` re-adiciona as variaveis de ambiente DEPOIS
+do `appsettings.E2E.json` (ate 2026-11-09 o arquivo vencia, e o
+`ConnectionStrings__Default` do `env` do webServer era ignorado em silencio). O
+`MigrateAsync` do boot aplica as migrations do working tree no banco do `.env`;
+banco que nao existe e criado.
 
 [ALERTA] **Configuracao do back para o e2e vai no `appsettings.E2E.json`, nunca
-no `env` do webServer.** Com `reuseExistingServer`, o back que ja estava de pe e
+no `env` do webServer** — salvo porta, banco e `Email:FrontBaseUrl`, que sao do
+clone e saem do mesmo `.env` tanto quando o Playwright sobe o back quanto quando
+reaproveita o que ele mesmo subiu. Com `reuseExistingServer`, o back que ja estava de pe e
 reaproveitado e nunca recebe as variaveis do `env`: o spec passa quando o
 Playwright sobe o back e falha quando reaproveita. Valor que o fake precisa
 conferir (ex.: `WhatsApp:AppId`/`AppSecret`, PLANO-SEGURANCA E143/E147) e
