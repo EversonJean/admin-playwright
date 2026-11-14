@@ -862,6 +862,124 @@ export function seedAiInsightDirect(tenantId: string, title: string): string {
   `).split(/\r?\n/)[0]!.trim();
 }
 
+// ─────────────────────────── expurgo aprovado (PLANO-EXPURGO-DE-DADOS) ───────────────────────────
+
+/**
+ * Entrega e retirada da locação recuadas para `isoDate` (`yyyy-MM-dd`). O prazo
+ * do endereço de entrega (P7) conta 5 anos da retirada, e a locação não nasce
+ * no passado (Etapa 336).
+ */
+export function backdateRentalPickupDirect(rentalId: string, isoDate: string): void {
+  const safeId = rentalId.replace(/'/g, "''");
+  const safeDate = isoDate.replace(/'/g, "''");
+  execSql(`
+    UPDATE "Rentals"
+       SET "DeliveryDate" = '${safeDate}', "PickupDate" = '${safeDate}', "UpdatedAt" = now()
+     WHERE "Id" = '${safeId}';
+  `);
+}
+
+export interface PendingPurgeRow {
+  status: string;
+  detectedAt: string;
+  lastDetectedAt: string;
+  postponedUntil: string | null;
+}
+
+/**
+ * A `PendingPurge` como está no banco. O `LastDetectedAt` não sai na API: é
+ * por ele que o spec sabe que mais um ciclo da detecção passou sem apagar nada.
+ */
+export function pendingPurgeDirect(pendingPurgeId: string): PendingPurgeRow {
+  const safeId = pendingPurgeId.replace(/'/g, "''");
+  const json = execSql(`
+    SELECT json_build_object(
+             'status', "Status", 'detectedAt', "DetectedAt", 'lastDetectedAt', "LastDetectedAt",
+             'postponedUntil', "PostponedUntil")
+      FROM "PendingPurges" WHERE "Id" = '${safeId}';
+  `);
+  if (!json) throw new Error(`PendingPurge ${pendingPurgeId} não encontrada`);
+  return JSON.parse(json) as PendingPurgeRow;
+}
+
+/**
+ * Traz a data do adiamento para ontem (UTC). A data mínima aceita é amanhã, e a
+ * detecção devolve a `AwaitingApproval` quando `PostponedUntil <= hoje` (UTC).
+ */
+export function expirePendingPurgePostponementDirect(pendingPurgeId: string): void {
+  const safeId = pendingPurgeId.replace(/'/g, "''");
+  execSql(`
+    UPDATE "PendingPurges"
+       SET "PostponedUntil" = (now() at time zone 'utc')::date - 1, "UpdatedAt" = now()
+     WHERE "Id" = '${safeId}' AND "Status" = 'Postponed';
+  `);
+}
+
+/** `TenantClosureStatus` do back, gravado como inteiro. */
+const TENANT_CLOSURE_STATUS: Record<number, string> = {
+  1: 'PendingGracePeriod',
+  2: 'Canceled',
+  3: 'Closed',
+  4: 'Purged',
+};
+
+export interface TenantClosureRow {
+  id: string;
+  status: string;
+  closedAt: string | null;
+  scheduledPurgeAt: string | null;
+  purgedAt: string | null;
+}
+
+/** O encerramento mais recente do tenant como está no banco, ou `undefined`. */
+export function tenantClosureDirect(tenantId: string): TenantClosureRow | undefined {
+  const safeTenant = tenantId.replace(/'/g, "''");
+  const json = execSql(`
+    SELECT json_build_object(
+             'id', "Id", 'status', "Status", 'closedAt', "ClosedAt",
+             'scheduledPurgeAt', "ScheduledPurgeAt", 'purgedAt', "PurgedAt")
+      FROM "TenantClosures" WHERE "TenantId" = '${safeTenant}'
+     ORDER BY "CreatedAt" DESC LIMIT 1;
+  `);
+  if (!json) return undefined;
+  const row = JSON.parse(json) as Omit<TenantClosureRow, 'status'> & { status: number };
+  return { ...row, status: TENANT_CLOSURE_STATUS[row.status] ?? String(row.status) };
+}
+
+/** Carência do encerramento vencida agora: o sweep leva a `Closed` e agenda a purga. */
+export function expireTenantClosureGraceDirect(closureId: string): void {
+  const safeId = closureId.replace(/'/g, "''");
+  execSql(`
+    UPDATE "TenantClosures"
+       SET "GracePeriodEndsAt" = now() - interval '1 minute', "UpdatedAt" = now()
+     WHERE "Id" = '${safeId}';
+  `);
+}
+
+/**
+ * Encerramento `Closed` há `closedDaysAgo` dias, com a purga agendada para 90
+ * dias depois do fechamento (vencida quando `closedDaysAgo` passa de 90).
+ * Chamar depois do fechamento: o sweep regrava as duas datas ao fechar.
+ */
+export function backdateTenantClosureDirect(closureId: string, closedDaysAgo: number): void {
+  const safeId = closureId.replace(/'/g, "''");
+  const days = Math.trunc(closedDaysAgo);
+  execSql(`
+    UPDATE "TenantClosures"
+       SET "ClosedAt" = now() - interval '${days} days',
+           "ScheduledPurgeAt" = now() - interval '${days} days' + interval '90 days',
+           "UpdatedAt" = now()
+     WHERE "Id" = '${safeId}';
+  `);
+}
+
+/** Linhas de uma tabela tenant-scoped do tenant, inclusive as soft-deletadas. */
+export function tenantRowCountDirect(tenantId: string, table: string): number {
+  const safeTenant = tenantId.replace(/'/g, "''");
+  const safeTable = table.replace(/"/g, '');
+  return parseInt(execSql(`SELECT COUNT(*) FROM "${safeTable}" WHERE "TenantId" = '${safeTenant}';`), 10);
+}
+
 /**
  * Conta tenants — útil pra smoke tests de "API está respondendo e DB tem dados".
  */

@@ -27,6 +27,7 @@ import { fakeWhatsApp } from '../../helpers/fake-providers';
 import { tenantDayPlus } from '../../helpers/rain-plan';
 import {
   apiBuildDayRoute,
+  apiExplainDayRoute,
   apiListDayRoutes,
   fakeAddressWithCoordinates,
   setupReservedRental,
@@ -50,6 +51,10 @@ import {
  * E172 (Etapa 281): o endereço de entrega da locação e a cópia dele na parada
  * da rota do dia entram na anonimização; o endereço redigido mantém cidade, UF
  * e país (decisão da Etapa 281 em `docs/modulos/back/Privacy.md`).
+ *
+ * E5 do `docs/implementar/PLANO-EXPURGO-DE-DADOS.md` (Etapa 335): o e-mail do
+ * titular sai mascarado no formato novo (`f***o@`, §3 regra 1) e a explicação
+ * da rota do dia que tinha a parada redigida é zerada (§3 regra 7).
  *
  * O titular (família, criança, contato de WhatsApp) não tem login: chega pelo
  * telefone ou pelo e-mail. A tela é Configurações → Privacidade → "Titulares de
@@ -316,7 +321,10 @@ test.describe('Fluxo 17.13 — LGPD por titular (SEG-L)', () => {
     await expect(authPage.getByTestId('data-subjects-found')).toBeVisible();
     const label = authPage.getByTestId('data-subjects-subject');
     await expect(label, 'telefone mascarado').toContainText(`****-${subject.phone.local.slice(-4)}`);
-    await expect(label, 'e-mail do cadastro mascarado').toContainText(`t***@e2e.test`);
+    // Etapa 335 (PLANO-EXPURGO-DE-DADOS §3 regra 1): primeira e última letra da
+    // parte local, `***` no meio e o domínio inteiro (`fulano@` -> `f***o@`).
+    const local = subject.email.split('@')[0]!;
+    await expect(label, 'e-mail do cadastro mascarado').toContainText(`${local[0]}***${local[local.length - 1]}@e2e.test`);
     const shown = await label.innerText();
     expect(shown, 'o telefone não aparece inteiro').not.toContain(subject.phone.local);
     expect(shown, 'o e-mail não aparece inteiro').not.toContain(subject.email);
@@ -761,7 +769,11 @@ test.describe('Fluxo 17.13 — LGPD por titular (SEG-L)', () => {
       enableAddOn: false,
     });
 
-    await apiBuildDayRoute(authApi, { date, teamLabel: `Equipe ${tag}` });
+    const plan = await apiBuildDayRoute(authApi, { date, teamLabel: `Equipe ${tag}` });
+    // E5 (PLANO-EXPURGO-DE-DADOS §3 regra 7): a explicação da rota cita as
+    // paradas; anonimizar o titular a zera.
+    const explained = await apiExplainDayRoute(authApi, plan.id);
+    expect(explained.narrative, 'a rota explicada antes da anonimização').toBeTruthy();
     const stopsOf = async (rentalId: string) =>
       (await apiListDayRoutes(authApi, date)).flatMap((p) => p.stops).filter((s) => s.rentalId === rentalId);
     const subjectStopsBefore = await stopsOf(rental.id);
@@ -783,6 +795,9 @@ test.describe('Fluxo 17.13 — LGPD por titular (SEG-L)', () => {
         deliveryDate: date,
         deliveryAddress: await fakeAddressWithCoordinates(addressB),
       });
+      const planB = await apiBuildDayRoute(apiB, { date, teamLabel: `Equipe B ${tag}` });
+      const explainedB = await apiExplainDayRoute(apiB, planB.id);
+      expect(explainedB.narrative, 'a rota da empresa B explicada').toBeTruthy();
 
       // A busca pela tela conta a locação e as duas paradas.
       await searchByPhone(authPage, phone.local);
@@ -832,6 +847,12 @@ test.describe('Fluxo 17.13 — LGPD por titular (SEG-L)', () => {
         expect(Number(stop.lng), 'parada sem longitude').toBe(0);
       }
 
+      // E5: a narrativa da rota que tinha a parada do titular foi zerada.
+      const planAfter = (await apiListDayRoutes(authApi, date)).find((p) => p.id === plan.id);
+      expect(planAfter, 'a rota do dia segue de pé').toBeTruthy();
+      expect(planAfter!.narrative ?? null, 'narrativa da rota zerada').toBeNull();
+      expect(planAfter!.narrativeGeneratedAt ?? null, 'sem data de geração').toBeNull();
+
       // A locação e as paradas de outro cliente ficam intactas.
       const other = await apiRentalAddress(authApi, otherRental.id);
       expect(other.street, 'locação de outro cliente intacta').toBe(otherAddress.street);
@@ -850,6 +871,8 @@ test.describe('Fluxo 17.13 — LGPD por titular (SEG-L)', () => {
       expect(inB.street, 'locação da empresa B intacta').toBe(addressB.street);
       expect(inB.number).toBe(addressB.number);
       expect(inB.neighborhood).toBe(addressB.neighborhood);
+      const planBAfter = (await apiListDayRoutes(apiB, date)).find((p) => p.id === planB.id);
+      expect(planBAfter?.narrative, 'a narrativa da rota da empresa B fica').toBe(explainedB.narrative);
     } finally {
       await apiB.dispose();
     }

@@ -5,6 +5,7 @@ import {
   apiCreateActivity,
   apiCreateClient,
   apiCreateProduct,
+  apiSetAiFeature,
 } from './api-entities';
 import { apiCompleteEvent, apiStartEvent } from './api-event-flow';
 import { enableFeatureFlagDirect } from './db-helper';
@@ -653,6 +654,9 @@ export interface DayRoutePlan {
   vehicleId: string | null;
   stops: DayRouteStop[];
   unresolvedStops: Array<{ kind: string; refId: string }>;
+  /** Explicação da rota pela IA ("Explicar rota", Etapa 139); nula até gerar. */
+  narrative: string | null;
+  narrativeGeneratedAt: string | null;
 }
 
 /**
@@ -690,6 +694,17 @@ export async function apiBuildDayRoute(
     },
   });
   await assertOk(res, 'POST /api/routing/day-plans');
+  return readJson<DayRoutePlan>(res);
+}
+
+/**
+ * POST /api/routing/day-plans/{id}/narrative — "Explicar rota" pela IA (fake da
+ * OpenAI). Liga o card `ai_day_routing`; o tenant do signup já tem `feature_ai`.
+ */
+export async function apiExplainDayRoute(api: APIRequestContext, planId: string): Promise<DayRoutePlan> {
+  await apiSetAiFeature(api, 'ai_day_routing', true);
+  const res = await api.post(`/api/routing/day-plans/${planId}/narrative`);
+  await assertOk(res, 'POST /api/routing/day-plans/{id}/narrative');
   return readJson<DayRoutePlan>(res);
 }
 
