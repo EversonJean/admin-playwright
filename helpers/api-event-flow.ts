@@ -72,6 +72,20 @@ export interface CreateBudgetInput {
   displacementFee?: number;
   /** Preço por colaborador da equipe; default 200. */
   teamPricePerCollaborator?: number;
+  /**
+   * Linhas de custo adicional do orçamento (`AdditionalCostLineDto`, Etapa 120);
+   * o aceite as copia para o evento. `passThroughToClient` = "Repassar ao
+   * cliente" (soma no total cobrado). Omitidas = nenhuma linha.
+   */
+  additionalCostLines?: AdditionalCostLineInput[];
+}
+
+/** Uma linha de custo adicional do orçamento; `kind` default `Fixed`, `amount` default 0. */
+export interface AdditionalCostLineInput {
+  name: string;
+  kind?: 'Fixed' | 'ByDistance';
+  amount?: number;
+  passThroughToClient?: boolean;
 }
 
 function todayPlus(days: number): string {
@@ -132,6 +146,16 @@ export function budgetRequestBody(input: CreateBudgetInput): Record<string, unkn
       : {}),
     ...(input.packageId ? { packageId: input.packageId } : {}),
     ...(input.eventCategoryId ? { eventCategoryId: input.eventCategoryId } : {}),
+    ...(input.additionalCostLines
+      ? {
+          additionalCostLines: input.additionalCostLines.map((l) => ({
+            name: l.name,
+            kind: l.kind ?? 'Fixed',
+            amount: l.amount ?? 0,
+            passThroughToClient: l.passThroughToClient ?? false,
+          })),
+        }
+      : {}),
     ...(input.partnerSale
       ? {
           isPartnerSale: true,
@@ -195,11 +219,17 @@ export async function apiConfirmCommunityBudget(
  * Ação comunitária confirmada pelo gestor (o `confirm-community` real, molde do
  * `setupCommunityAction` do `fluxos-completos/11`): orçamento `Community` em
  * rascunho para a escola e confirmação sem envio. O evento nasce sem plano de
- * pagamento.
+ * pagamento. `additionalCostLines` vão no orçamento e o confirm as copia para o
+ * evento (marcadas "repassar" ou não; na ação comunitária a marca é ignorada).
  */
 export async function setupCommunityEvent(
   api: APIRequestContext,
-  input: { eventDate: string; activityIds?: string[]; childrenCount?: number },
+  input: {
+    eventDate: string;
+    activityIds?: string[];
+    childrenCount?: number;
+    additionalCostLines?: AdditionalCostLineInput[];
+  },
 ): Promise<{ eventId: string; budgetId: string; clientId: string }> {
   const suffix = Math.random().toString(36).slice(2, 8);
   const client = await apiCreateClient(api, { name: `Escola E2E ${suffix}` });
@@ -210,6 +240,7 @@ export async function setupCommunityEvent(
     eventDate: input.eventDate,
     childrenCount: input.childrenCount ?? 10,
     chargeMode: 'Community',
+    ...(input.additionalCostLines ? { additionalCostLines: input.additionalCostLines } : {}),
   });
   const confirmed = await apiConfirmCommunityBudget(api, budget.id);
   return { eventId: confirmed.anchorEventId, budgetId: budget.id, clientId: client.id };

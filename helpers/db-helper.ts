@@ -95,6 +95,22 @@ export function enableFeatureFlagDirect(tenantId: string, entitlementKey: string
 }
 
 /**
+ * Desliga o add-on ligado por `enableFeatureFlagDirect` (`IsActive = false` em
+ * todas as ativações da chave no tenant). Para o cenário "tenant sem o add-on"
+ * que precisa de dado que só nasce com ele ligado (avaria de locação, por
+ * exemplo): cria com o add-on, desliga, lê.
+ */
+export function disableFeatureFlagDirect(tenantId: string, entitlementKey: string): void {
+  const safeTenant = tenantId.replace(/'/g, "''");
+  const safeKey = entitlementKey.replace(/'/g, "''").toLowerCase();
+  execSql(`
+    UPDATE "AddonActivations"
+       SET "IsActive" = false, "UpdatedAt" = now()
+     WHERE "TenantId" = '${safeTenant}' AND lower("EntitlementKey") = '${safeKey}';
+  `);
+}
+
+/**
  * Cria um WhatsAppTemplate Approved direto no banco — necessario pros
  * specs de outbound (11.2) ja que templates sao cross-tenant gerenciados
  * por SuperAdmin, e o fixture `tenant` so cria admin de tenant. Devolve
