@@ -24,6 +24,7 @@
     "report": "playwright show-report",
     "codegen": "playwright codegen http://localhost:4200",
     "db:reset": "node scripts/db-reset.js",
+    "seed": "node scripts/seed.js",
     "fakes:asaas": "npm run start -w fake-providers/asaas",
     "fakes:clicksign": "npm run start -w fake-providers/clicksign",
     "fakes:whatsapp": "npm run start -w fake-providers/whatsapp-meta",

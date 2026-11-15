@@ -43,7 +43,7 @@ test.describe('Fluxo <N.M> — <nome>', () => {
 
 ## Checklist ao criar
 
-1. Número livre na área (ou área nova `<N>-<area>` se não existe). 2. Diagrama `.mmd` em `docs/fluxos/` com o mesmo número e linha em `FLUXOS.md`. 3. `data-testid` no front para tudo que o spec toca. 4. Rodar só o spec novo antes de rodar a área.
+1. Número livre na área (ou área nova `<N>-<area>` se não existe). 2. Diagrama `.mmd` em `docs/fluxos/` com o mesmo número e linha em `FLUXOS.md`. 3. `data-testid` no front para tudo que o spec toca. 4. Rodar só o spec novo antes de rodar a área. 5. Cenário de teste manual do fluxo em `docs/cenarios-de-teste/<N>-<area>/` com o MESMO nome do spec (`docs/CLAUDE.md`, "Cenários de teste por fluxo") e a massa dele em `seeds/flows/` (`../seeds/CLAUDE.md`); cada cenário que o spec cobre cita o título do teste na linha Automação. `node .claude/scripts/check-scenarios.js` acusa spec sem cenário e variante `N.M.K` não citada.
 
 ## O que NÃO vai aqui
 
