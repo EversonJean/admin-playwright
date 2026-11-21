@@ -322,7 +322,10 @@ export const fakeWhatsApp = {
     messageId?: string;
     status?: 'sent' | 'delivered' | 'read' | 'failed';
     text?: string;
-    /** Status: `timestamp` da Meta em segundos; fixo, o replay e byte a byte. */
+    /**
+     * `timestamp` da Meta em segundos (default agora). Status: fixo, o replay e
+     * byte a byte. Inbound: ordena mensagens seguidas do mesmo segundo.
+     */
     timestamp?: number;
     /** Status `failed`: motivo no formato da Meta. */
     errors?: Array<{ code: number; title: string; message?: string; error_data?: { details?: string } }>;
@@ -353,6 +356,24 @@ export const fakeWhatsApp = {
         data: { id: input.id, mimeType: input.mimeType, contentBase64: input.bytes.toString('base64') },
       });
       if (!res.ok()) throw new Error(`fake whatsapp media: ${res.status()}`);
+    } finally {
+      await api.dispose();
+    }
+  },
+  /**
+   * As próximas `count` chamadas de envio (`POST /:phoneNumberId/messages`) para
+   * o telefone respondem `status` (503 por default): a Meta fora por um instante,
+   * que o back trata como falha transitória. `count: 0` desarma. Por
+   * destinatário, então o envio de outro teste não gasta as falhas; o provider do
+   * back tenta `WhatsApp:MaxAttempts` vezes (2 no E2E) a cada envio.
+   */
+  failMessagesTo: async (phone: string, count: number, status = 503): Promise<void> => {
+    const api = await ctx();
+    try {
+      const res = await api.put(`${URLS.whatsapp}/_control/messages-failure`, {
+        data: { to: phone, count, status },
+      });
+      if (!res.ok()) throw new Error(`fake whatsapp messages-failure: ${res.status()}`);
     } finally {
       await api.dispose();
     }

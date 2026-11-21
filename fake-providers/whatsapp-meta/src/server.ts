@@ -27,7 +27,11 @@ import * as state from './state.js';
  * pré-cadastra um template na WABA com status específico (Rejected/Paused).
  * `POST /_control/media` `{ id, mimeType, contentBase64 }` cadastra a mídia que
  * um webhook inbound vai citar pelo `id` (o `GET /:mediaId` e o download exigem o
- * token do canal do tenant, como a Meta).
+ * token do canal do tenant, como a Meta). Id que ninguém cadastrou cai no
+ * `GET /:metaTemplateId` e volta sem `url`: a mídia que a Meta não entrega.
+ * `PUT /_control/messages-failure` `{ to, count, status? }` faz as próximas
+ * `count` chamadas de envio para `to` responderem `status` (503 por padrão), a
+ * falha transitória do envio.
  *
  * Webhook callback (status update / inbound mensagem):
  *   POST /_control/trigger-webhook → POSTa em /api/webhooks/whatsapp
@@ -131,6 +135,19 @@ await createFakeServer({
       if (!body?.to || !body.type) {
         reply.status(400);
         return { error: { message: 'invalid request', code: 100 } };
+      }
+      // Falha transitória armada pelo spec para este destinatário (E20).
+      const failure = state.takeMessageFailure(body.to);
+      if (failure) {
+        reply.status(failure.status);
+        return {
+          error: {
+            message: 'Service temporarily unavailable (fake)',
+            type: 'OAuthException',
+            code: 2,
+            is_transient: true,
+          },
+        };
       }
       // Resposta com formato da Meta v18
       const wamid = uniqueWamid();
@@ -396,6 +413,23 @@ await createFakeServer({
       },
     );
 
+    // PUT /_control/messages-failure { to, count, status? } — as próximas `count`
+    // chamadas de envio para `to` respondem `status` (503 por padrão), a Meta
+    // fora por um instante; `count: 0` desarma. O provider do back trata como
+    // transitória e o envio fica na fila (E20, Etapa 265).
+    app.put<{ Body: { to?: string; count?: number; status?: number } }>(
+      '/_control/messages-failure',
+      async (req, reply) => {
+        const to = req.body?.to;
+        if (!to) {
+          reply.status(400);
+          return { error: 'to e obrigatorio' };
+        }
+        const remaining = state.setMessageFailure(to, req.body?.count ?? 1, req.body?.status ?? 503);
+        return { to, remaining };
+      },
+    );
+
     // POST /_control/template — pre-cadastra um template com status
     // especifico pra cenarios de Rejected/Paused.
     app.post<{
@@ -428,8 +462,9 @@ await createFakeServer({
       /** Pra inbound: texto recebido */
       text?: string;
       /**
-       * Pra status: `timestamp` da Meta em segundos (default agora). Fixo, o
-       * mesmo payload pode ser reenviado byte a byte (replay de verdade).
+       * `timestamp` da Meta em segundos (default agora). No status, fixo, o
+       * mesmo payload pode ser reenviado byte a byte (replay de verdade); no
+       * inbound, ordena mensagens seguidas do mesmo segundo (E17, Etapa 265).
        */
       timestamp?: number;
       /** Pra status `failed`: `errors[]` no formato da Meta (code, title, error_data.details). */
@@ -493,7 +528,7 @@ await createFakeServer({
                           {
                             from: body.phone.replace(/\D/g, ''),
                             id: uniqueWamid(),
-                            timestamp: Math.floor(Date.now() / 1000).toString(),
+                            timestamp: (body.timestamp ?? Math.floor(Date.now() / 1000)).toString(),
                             type: 'text',
                             text: { body: body.text ?? '' },
                           },

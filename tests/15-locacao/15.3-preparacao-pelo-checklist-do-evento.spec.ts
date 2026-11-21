@@ -47,11 +47,12 @@ test.describe('Fluxo 15.3 — Preparação pelo checklist do evento', () => {
     expect(item!.description ?? '').toContain(second.rental.rentalNumber);
 
     // §4 item 12 (decisão 19): a marcação à mão é recusada com o texto da chave,
-    // que aponta a preparação (e não a aba Materiais).
-    const toggle = await authApi.post(`/api/events/${eventId}/checklist/${item!.id}/toggle`);
-    expect(toggle.status()).toBe(409);
-    expect(await apiErrorCodes(toggle)).toContain('EventChecklist.SystemItemReadOnly');
-    const refusal = JSON.stringify(await toggle.json());
+    // que aponta a preparação (e não a aba Materiais). A marcação é pelo `check` desde a
+    // Etapa 260 (PLANO-CHECKLIST-EVENTO-NO-PORTAL, decisão 12: o `toggle` saiu).
+    const check = await authApi.post(`/api/events/${eventId}/checklist/${item!.id}/check`);
+    expect(check.status()).toBe(409);
+    expect(await apiErrorCodes(check)).toContain('EventChecklist.SystemItemReadOnly');
+    const refusal = JSON.stringify(await check.json());
     expect(refusal).toContain('preparação');
     expect(refusal).not.toContain('aba Materiais');
     expect((await rentalPreparationItem(authApi, eventId))!.isDone, 'nada marcado').toBe(false);

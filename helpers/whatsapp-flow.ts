@@ -42,10 +42,49 @@ export function uid(): string {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
-/** Mensagem de texto recebida pelo número do canal (`phone_number_id`), pelo webhook assinado do fake. */
-export async function receiveInbound(phoneNumberId: string, phoneE164: string, text: string): Promise<void> {
-  const hook = await fakeWhatsApp.triggerWebhook({ kind: 'inbound', phoneNumberId, phone: phoneE164, text });
+/**
+ * Mensagem de texto recebida pelo número do canal (`phone_number_id`), pelo
+ * webhook assinado do fake. `timestamp` (segundos) é a hora da mensagem no
+ * WhatsApp; sem ele, agora. Mensagens seguidas do mesmo segundo empatam na hora,
+ * e quem depende da ordem (o debounce da extração) passa segundos distintos.
+ */
+export async function receiveInbound(
+  phoneNumberId: string,
+  phoneE164: string,
+  text: string,
+  opts: { timestamp?: number } = {},
+): Promise<void> {
+  const hook = await fakeWhatsApp.triggerWebhook({
+    kind: 'inbound',
+    phoneNumberId,
+    phone: phoneE164,
+    text,
+    timestamp: opts.timestamp,
+  });
   expect(hook.backStatus, `webhook inbound: ${hook.backBody}`).toBe(200);
+}
+
+export interface ConversationMessage {
+  id: string;
+  direction: 'Inbound' | 'Outbound';
+  type: string;
+  occurredAt: string;
+  body: string | null;
+  attachments: Array<{
+    id: string;
+    mediaType: string;
+    mediaUrl: string;
+    mimeType: string | null;
+    fileName: string | null;
+    caption: string | null;
+  }>;
+}
+
+/** Mensagens da conversa (`GET /api/conversations/{id}/messages`, mais recentes primeiro). */
+export async function apiListMessages(api: APIRequestContext, conversationId: string): Promise<ConversationMessage[]> {
+  const res = await api.get(`/api/conversations/${conversationId}/messages?take=100`);
+  await assertOk(res, 'GET /api/conversations/{id}/messages');
+  return unwrapList<ConversationMessage>(res);
 }
 
 interface ConversationRow {

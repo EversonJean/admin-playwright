@@ -134,6 +134,13 @@ export interface PreparationStepInput {
   category: 'Cleaning' | 'FunctionalTest' | 'Safety' | 'Accessories' | 'Packing' | 'Other';
   isMandatory: boolean;
   instructions?: string | null;
+  /** Etapa 328 (CB-E): o passo só fica feito com foto. */
+  requiresPhoto?: boolean;
+  /**
+   * Etapa 329 (CB-F): `OnSite` = passo da montagem no local. O produto
+   * (`ProductPreparationStepInputDto`) ignora `stage`; só o tipo de equipamento o usa.
+   */
+  stage?: 'BeforeDispatch' | 'OnSite';
 }
 
 /** Vínculo do produto a uma atividade, visto do produto (`ActivityProducts` do `CreateProductDto`). */

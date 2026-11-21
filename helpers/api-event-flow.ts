@@ -78,6 +78,13 @@ export interface CreateBudgetInput {
    * cliente" (soma no total cobrado). Omitidas = nenhuma linha.
    */
   additionalCostLines?: AdditionalCostLineInput[];
+  /**
+   * Etapa 325 (CB-A) — equipamentos para locação, por tipo e quantidade (o
+   * servidor congela o preço e a caução). Exigem o add-on
+   * `feature_equipment_rental` e, para sair de `Draft`, o `address`.
+   * Omitidas = nenhuma linha.
+   */
+  equipmentLines?: Array<{ equipmentTypeId: string; quantity: number }>;
 }
 
 /** Uma linha de custo adicional do orçamento; `kind` default `Fixed`, `amount` default 0. */
@@ -144,6 +151,7 @@ export function budgetRequestBody(input: CreateBudgetInput): Record<string, unkn
           },
         }
       : {}),
+    ...(input.equipmentLines ? { equipmentLines: input.equipmentLines } : {}),
     ...(input.packageId ? { packageId: input.packageId } : {}),
     ...(input.eventCategoryId ? { eventCategoryId: input.eventCategoryId } : {}),
     ...(input.additionalCostLines

@@ -8,9 +8,10 @@ Testes ponta a ponta (Playwright + Chromium) do Recreativo 2: front Angular + ba
 |---|---|---|
 | `tests/<N>-<area>/` | specs numerados por área de negócio; `0-infra` é transversal | sim |
 | `fixtures/` | `tenantTest` (tenant + admin novos por teste), `authTest` (página e API autenticadas), `twoTenantsTest` (isolamento), `superAdminTest` | — |
-| `helpers/` | `api-client` (contexto HTTP, signup+confirmação), `api-entities` (`apiCreateClient`, `apiCreateActivity`… criam pré-condição via API), `api-event-flow`, `setup-flows`, `external-calendar` (conectar o Google pelo fake, com step-up), `smoke` (`smokeRoute(page, rota, { ready })`, `ready` = `data-testid` da raiz da tela, obrigatório), `test-data` (`fake*`), `db-helper`, `fake-providers` (controle dos fakes), `response` (`readJson`, `assertOk`, `apiErrorCodes`, `unwrapList`), `ui` (`snack`), `types` | — |
+| `helpers/` | `api-client` (contexto HTTP, signup+confirmação), `api-entities` (`apiCreateClient`, `apiCreateActivity`… criam pré-condição via API), `api-event-flow`, `setup-flows`, `external-calendar` (conectar o Google pelo fake, com step-up), `smoke` (`smokeRoute(page, rota, { ready })`, `ready` = `data-testid` da raiz da tela, obrigatório), `test-data` (`fake*`), `db-helper`, `fake-providers` (controle dos fakes), `response` (`readJson`, `assertOk`, `apiErrorCodes`, `unwrapList`), `ui` (`snack`), `types`, `whatsapp-flow` (canal, inbound, conversas e envios pelo fake), `workers` (estado dos workers no Super Admin; `waitForWorkerCycleAfter` espera um ciclo seguinte sem sleep fixo), `local-storage` (`storedDocumentFile`, o arquivo de uma key no storage local do back) | — |
 | `fake-providers/` | um servidor Fastify por provedor externo, com `/_control/*` | sim |
-| `scripts/` | `db-reset.js`, `gen-stubs.js` | — |
+| `scripts/` | `db-reset.js`, `gen-stubs.js`, `seed.js` (linha de comando da massa) | — |
+| `seeds/` | carga de **massa de teste manual** por fluxo (`npm run seed -- <fluxo> [--runs N]`): uma empresa nova por lote, pelo menos 3 registros por fluxo, dados sorteados; config própria (`playwright.seed.config.ts`), fora do `npm test` | sim |
 
 ## Comandos
 
@@ -24,6 +25,7 @@ npm run test:ui                # modo interativo (dev de teste)
 npm run test:smoke             # só @smoke
 SKIP_WEBSERVER=true npm test   # back/front já rodando em outro terminal
 npm run db:reset
+npm run seed -- 5.3 --runs 2   # massa de teste manual do fluxo 5.3, dois lotes (aplicação já no ar; --list mostra os fluxos)
 ```
 
 Agente roda pelo script, não pelo `npx` cru: `node .claude/scripts/run-tests.js e2e <spec>[,<spec2>]` (da raiz do workspace) confere o dono das portas (para se for o outro clone), faz o `dotnet build`, roda com relatório JSON e devolve só teste, `arquivo:linha`, mensagem e o caminho do `error-context.md`, screenshot e trace de cada falha. `--check` faz só a conferência das portas.
@@ -97,4 +99,4 @@ Rode `dotnet build` no `admin-backend` antes da primeira execucao do dia.
 
 ## Veja também
 
-`README.md` · `docs/fluxos/FLUXOS.md` · `docs/QUALIDADE-TESTES.md`.
+`README.md` · `docs/fluxos/FLUXOS.md` · `docs/QUALIDADE-TESTES.md` · `docs/cenarios-de-teste/README.md` (cenário de teste manual por fluxo e guia da massa).

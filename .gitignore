@@ -8,3 +8,4 @@ playwright/.cache/
 *.log
 fake-providers/**/dist/
 fake-providers/**/*.tsbuildinfo
+seeds/output/

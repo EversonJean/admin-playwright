@@ -368,12 +368,14 @@ test.describe('Fluxo 16 — Transporte dos brinquedos', () => {
     });
 
     // §10 item 5 (decisão 19): o item de sistema recusa a marcação à mão e aponta a aba Transporte.
+    // A marcação é pelo `check` desde a Etapa 260 (PLANO-CHECKLIST-EVENTO-NO-PORTAL, decisão 12:
+    // o `toggle` saiu).
     const item = await rentalTransportItem(authApi, eventId);
     expect(item, 'o item "Planejar o transporte" no checklist do evento').toBeTruthy();
-    const toggle = await authApi.post(`/api/events/${eventId}/checklist/${item!.id}/toggle`);
-    expect(toggle.status()).toBe(409);
-    expect(await apiErrorCodes(toggle)).toContain('EventChecklist.SystemItemReadOnly');
-    expect(JSON.stringify(await toggle.json())).toContain('aba Transporte');
+    const check = await authApi.post(`/api/events/${eventId}/checklist/${item!.id}/check`);
+    expect(check.status()).toBe(409);
+    expect(await apiErrorCodes(check)).toContain('EventChecklist.SystemItemReadOnly');
+    expect(JSON.stringify(await check.json())).toContain('aba Transporte');
     expect((await rentalTransportItem(authApi, eventId))!.isDone, 'nada marcado').toBe(false);
 
     await authPage.goto(`/app/events/${eventId}`);
