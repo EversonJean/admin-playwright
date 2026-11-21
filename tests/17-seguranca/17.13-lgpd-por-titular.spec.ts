@@ -1,5 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import path from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 import { APIRequestContext, Page } from '@playwright/test';
 
 import { authTest as test, expect } from '../../fixtures/auth.fixture';
@@ -24,6 +23,7 @@ import {
   userIdByEmailDirect,
 } from '../../helpers/db-helper';
 import { fakeWhatsApp } from '../../helpers/fake-providers';
+import { storedDocumentFile } from '../../helpers/local-storage';
 import { tenantDayPlus } from '../../helpers/rain-plan';
 import {
   apiBuildDayRoute,
@@ -66,9 +66,6 @@ const PRIVACY_ROUTE = '/app/settings/privacy';
 const ANONYMIZE_ACTION = 'privacy.data_subject.anonymize';
 const STEP_UP_HEADER = 'X-Step-Up-Token';
 const REDACTED_NAME = '[Titular anonimizado]';
-
-/** Storage local do back no E2E (`DocumentStorage:LocalRootPath` do `appsettings.E2E.json`). */
-const STORAGE_ROOT = path.resolve(__dirname, '../../../admin-backend/.local-storage/documents');
 
 interface RecordCount {
   key: string;
@@ -294,16 +291,6 @@ async function apiRentalAddress(api: APIRequestContext, rentalId: string): Promi
   const res = await api.get(`/api/rentals/${rentalId}`);
   await assertOk(res, 'GET /api/rentals/{id}');
   return (await readJson<{ deliveryAddress: RentalAddress }>(res)).deliveryAddress;
-}
-
-/** Arquivo da key no storage local (`<root>/<bucket>/<key>`), ou null. */
-function storedFile(key: string): string | null {
-  if (!existsSync(STORAGE_ROOT)) return null;
-  for (const bucket of readdirSync(STORAGE_ROOT)) {
-    const candidate = path.join(STORAGE_ROOT, bucket, ...key.split('/'));
-    if (existsSync(candidate)) return candidate;
-  }
-  return null;
 }
 
 test.describe('Fluxo 17.13 — LGPD por titular (SEG-L)', () => {
@@ -706,7 +693,7 @@ test.describe('Fluxo 17.13 — LGPD por titular (SEG-L)', () => {
         { message: 'anexo arquivado no storage', timeout: 90_000, intervals: [2_000] },
       )
       .toBe(true);
-    const file = storedFile(key);
+    const file = storedDocumentFile(key);
     expect(file, `arquivo ${key} no storage do E2E`).not.toBeNull();
     expect(readFileSync(file!).equals(pdf), 'o storage guarda o binário baixado').toBe(true);
 

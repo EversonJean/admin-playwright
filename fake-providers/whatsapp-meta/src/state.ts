@@ -53,12 +53,45 @@ export interface FakeInboundMedia {
 
 const inboundMedia = new Map<string, FakeInboundMedia>();
 
+/**
+ * Falha transitória do envio (`POST /:phoneNumberId/messages`) por destinatário
+ * (e2e da Etapa 265, PLANO-EXECUCAO-DOS-WORKERS E20): as próximas `remaining`
+ * chamadas para o `to` (só dígitos) respondem `status`. Por destinatário, e não
+ * global, porque os workers do Playwright dividem este fake: uma falha global
+ * seria gasta pelo envio do teste ao lado.
+ */
+const messageFailures = new Map<string, { remaining: number; status: number }>();
+
+function digitsOf(phone: string): string {
+  return phone.replace(/\D/g, '');
+}
+
 export function reset(): void {
   templates.clear();
   wabaPhoneNumbers.clear();
   wabaTemplates.clear();
   uploadSessions.clear();
   inboundMedia.clear();
+  messageFailures.clear();
+}
+
+/** Arma (`count > 0`) ou desarma (`count <= 0`) a falha do envio para o destinatário. */
+export function setMessageFailure(to: string, count: number, status: number): number {
+  const key = digitsOf(to);
+  const remaining = Math.max(0, Math.floor(count));
+  if (remaining === 0) messageFailures.delete(key);
+  else messageFailures.set(key, { remaining, status });
+  return remaining;
+}
+
+/** Consome uma falha armada para o destinatário; `undefined` quando não há. */
+export function takeMessageFailure(to: string): { status: number } | undefined {
+  const key = digitsOf(to);
+  const failure = messageFailures.get(key);
+  if (!failure) return undefined;
+  failure.remaining -= 1;
+  if (failure.remaining <= 0) messageFailures.delete(key);
+  return { status: failure.status };
 }
 
 export function putInboundMedia(media: FakeInboundMedia): FakeInboundMedia {
