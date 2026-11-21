@@ -750,7 +750,11 @@ test.describe('Fluxo completo 25 — Custos repassados no evento e "Despesas do 
       await expect(authPage.getByTestId(`damages-row-${paid.eventId}`)).toBeVisible();
 
       // §5 Back 5 / Front 3 — "Exportar" em Excel: a aba "Avarias e perdas" traz as duas.
-      const download = authPage.waitForEvent('download');
+      // A primeira planilha do processo paga a partida a frio do ClosedXML (as
+      // fontes do `AdjustToContents`): medido em 2026-11-21, 6 s na máquina
+      // ociosa e 0,3 s na segunda; com a suíte inteira e outro clone na fila
+      // passava dos 15 s do padrão. É o único export deste spec.
+      const download = authPage.waitForEvent('download', { timeout: 60_000 });
       await authPage.getByTestId('monthly-expenses-export-excel').click();
       const file = await download;
       expect(file.suggestedFilename()).toMatch(/\.xlsx$/);

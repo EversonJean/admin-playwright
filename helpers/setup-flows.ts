@@ -152,6 +152,28 @@ export async function setupDraftContract(
 ): Promise<{ contractId: string; eventId: string; templateId: string; clienteId: string }> {
   enableFeatureFlagDirect(tenantId, 'feature_digital_signature');
   const { eventId, clienteId } = await setupAcceptedEvent(api);
+  const templateId = await apiCreateActiveContractTemplate(api);
+
+  // Contract
+  const contractRes = await api.post('/api/contracts', {
+    data: { eventId, templateId },
+  });
+  await assertOk(contractRes, 'POST /api/contracts');
+  const contract = await readJson<{ id: string }>(contractRes);
+  return { contractId: contract.id, eventId, templateId, clienteId };
+}
+
+/**
+ * Modelo de contrato ATIVO com uma cláusula ativa (layout do catálogo). O
+ * corpo da cláusula pode levar variáveis do catálogo (`{locacao.itens}`,
+ * Etapa 325). Devolve o id do modelo.
+ */
+export async function apiCreateActiveContractTemplate(
+  api: APIRequestContext,
+  clause: { bodyHtml?: string; bodyPlain?: string } = {},
+): Promise<string> {
+  const bodyHtml = clause.bodyHtml ?? '<p>Clausula de teste.</p>';
+  const bodyPlain = clause.bodyPlain ?? 'Clausula de teste.';
 
   // Layout pra usar como base do template
   const layoutsRes = await api.get('/api/contract-layouts');
@@ -193,15 +215,15 @@ export async function setupDraftContract(
       applicableTo: 1,
       isRequired: false,
       suggestedOrder: 1,
-      bodyHtml: '<p>Clausula de teste.</p>',
-      bodyPlain: 'Clausula de teste.',
+      bodyHtml,
+      bodyPlain,
     },
   });
   await assertOk(clauseRes, 'POST /api/clauses');
-  const clause = await readJson<{ id: string }>(clauseRes);
+  const created = await readJson<{ id: string }>(clauseRes);
 
-  const issueRes = await api.post(`/api/clauses/${clause.id}/versions`, {
-    data: { bodyHtml: '<p>Clausula de teste.</p>', bodyPlain: 'Clausula de teste.' },
+  const issueRes = await api.post(`/api/clauses/${created.id}/versions`, {
+    data: { bodyHtml, bodyPlain },
   });
   await assertOk(issueRes, 'POST clause version');
   const issued = await readJson<{ id?: string; versionId?: string }>(issueRes);
@@ -209,12 +231,12 @@ export async function setupDraftContract(
   if (!versionId) throw new Error('Issue version nao devolveu id');
 
   await assertOk(
-    await api.post(`/api/clauses/${clause.id}/versions/${versionId}/activate`),
+    await api.post(`/api/clauses/${created.id}/versions/${versionId}/activate`),
     'activate clause version',
   );
   await assertOk(
     await api.put(`/api/contract-templates/${template.id}/clauses`, {
-      data: { clauses: [{ clauseId: clause.id, order: 1 }] },
+      data: { clauses: [{ clauseId: created.id, order: 1 }] },
     }),
     'PUT template clauses',
   );
@@ -222,14 +244,7 @@ export async function setupDraftContract(
     await api.post(`/api/contract-templates/${template.id}/activate`),
     'activate template',
   );
-
-  // Contract
-  const contractRes = await api.post('/api/contracts', {
-    data: { eventId, templateId: template.id },
-  });
-  await assertOk(contractRes, 'POST /api/contracts');
-  const contract = await readJson<{ id: string }>(contractRes);
-  return { contractId: contract.id, eventId, templateId: template.id, clienteId };
+  return template.id;
 }
 
 /**
