@@ -48,7 +48,8 @@ test.describe('Fluxo 15.3 — Preparação pelo checklist do evento', () => {
 
     // §4 item 12 (decisão 19): a marcação à mão é recusada com o texto da chave,
     // que aponta a preparação (e não a aba Materiais).
-    const toggle = await authApi.post(`/api/events/${eventId}/checklist/${item!.id}/toggle`);
+    // A marcação à mão é o `POST .../check` (não existe `/toggle`: dava 404).
+    const toggle = await authApi.post(`/api/events/${eventId}/checklist/${item!.id}/check`);
     expect(toggle.status()).toBe(409);
     expect(await apiErrorCodes(toggle)).toContain('EventChecklist.SystemItemReadOnly');
     const refusal = JSON.stringify(await toggle.json());

@@ -30,7 +30,14 @@ import {
 } from '../../helpers/db-helper';
 import { addCompanyExpense, addEventExpense } from '../../helpers/monthly-expenses';
 import { setupRainParty } from '../../helpers/rain-plan';
-import { setupReservedRental } from '../../helpers/rental-preparation';
+import {
+  apiCreateEquipmentType,
+  apiCreateEquipmentUnit,
+  apiCreateRental,
+  apiTransitionRental,
+  inspectRentalBatch,
+  setupReservedRental,
+} from '../../helpers/rental-preparation';
 import { assertOk, readJson } from '../../helpers/response';
 import { setupAcceptedEvent, setupDraftContract, setupPaidEvent } from '../../helpers/setup-flows';
 import { SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD, SUPER_ADMIN_TOTP_SECRET } from '../../helpers/super-admin-session';
@@ -494,6 +501,106 @@ export async function reservedRentals(lot: Lot, events: SeededEvent[] = []): Pro
     out.push({ id: r.rental.id, typeName, assetCode: r.unit.assetCode, clientName: events[i]?.clientName ?? cs[i]!.name, deliveryDate });
   }
   return out;
+}
+
+export interface EquipmentBudget extends SentBudget {
+  equipment: string;
+}
+
+/**
+ * Orçamento com brinquedo (FC-20, Etapas 325 e 326): dois tipos com unidades
+ * (3 camas elásticas com caução e 1 piscina de bolinhas, os dois sem passo de
+ * preparação) e três orçamentos ENVIADOS com equipamento e endereço da festa,
+ * em semanas diferentes. O terceiro pede 2 piscinas, uma a mais do que existe:
+ * no aceite, a locação nasce em rascunho e os gestores recebem o aviso de falta.
+ */
+export async function equipmentBudgets(lot: Lot): Promise<{ types: string[]; budgets: EquipmentBudget[] }> {
+  await feature(lot, 'feature_equipment_rental');
+  const [cs, acts] = [await clients(lot), await activities(lot)];
+  const bedName = `Cama elástica ${lot.id}`;
+  const poolName = `Piscina de bolinhas ${lot.id}`;
+  const bed = await apiCreateEquipmentType(lot.api, { name: bedName, depositAmount: 300 });
+  const pool = await apiCreateEquipmentType(lot.api, { name: poolName });
+  const bedCodes: string[] = [];
+  for (let i = 0; i < RECORDS_PER_FLOW; i++) bedCodes.push((await apiCreateEquipmentUnit(lot.api, bed.id)).assetCode);
+  const poolCode = (await apiCreateEquipmentUnit(lot.api, pool.id)).assetCode;
+  const plans = [
+    { lines: [{ equipmentTypeId: bed.id, quantity: 2 }], label: `2x ${bedName}` },
+    { lines: [{ equipmentTypeId: bed.id, quantity: 2 }], label: `2x ${bedName}` },
+    {
+      lines: [{ equipmentTypeId: bed.id, quantity: 1 }, { equipmentTypeId: pool.id, quantity: 2 }],
+      label: `1x ${bedName} e 2x ${poolName} (só 1 piscina cadastrada: falta 1 no aceite)`,
+    },
+  ];
+  const venues = lot.rng.take(VENUES, RECORDS_PER_FLOW);
+  const budgets: EquipmentBudget[] = [];
+  for (let i = 0; i < RECORDS_PER_FLOW; i++) {
+    const eventDate = lot.freeDay(dayPlus(30 + i * 7 + lot.rng.int(0, 3)));
+    const created = await apiCreateBudget(lot.api, {
+      clientId: cs[i]!.id,
+      activityIds: [acts[i]!.id],
+      eventDate,
+      childrenCount: 10 + i * 5,
+      eventLocation: venues[i]!,
+      address: randomAddress(lot.rng),
+      equipmentLines: plans[i]!.lines,
+    });
+    const sent = await apiSendBudget(lot.api, created.id);
+    budgets.push({
+      id: created.id,
+      clientName: cs[i]!.name,
+      eventDate,
+      venue: venues[i]!,
+      activityName: acts[i]!.name,
+      publicUrl: sent.publicUrl,
+      equipment: plans[i]!.label,
+    });
+  }
+  return {
+    types: [
+      `${bedName}: ${bedCodes.length} unidades (${bedCodes.join(', ')}), caução de R$ 300,00 por unidade`,
+      `${poolName}: 1 unidade (${poolCode}), sem caução`,
+    ],
+    budgets,
+  };
+}
+
+/**
+ * Giro e limpeza da volta (FC-21, Etapas 324 e 327): um tipo com giro de 24 h
+ * e "Higienizar na volta", sem passo de preparação, com 3 unidades. Para cada
+ * unidade, uma locação EM USO (já saiu, com a inspeção de saída) e a próxima
+ * locação da mesma unidade RESERVADA 3 dias depois: a volta da primeira abre a
+ * limpeza, e a saída da segunda fica travada até alguém concluir.
+ */
+export async function rentalsWithReturnCleaning(lot: Lot): Promise<{
+  typeName: string;
+  pairs: Array<{ assetCode: string; clientName: string; inUseNumber: string; inUseDate: string; nextNumber: string; nextDate: string }>;
+}> {
+  await feature(lot, 'feature_equipment_rental');
+  const cs = await clients(lot);
+  const typeName = `Castelo inflável ${lot.id}`;
+  const type = await apiCreateEquipmentType(lot.api, { name: typeName, turnaroundHours: 24, requiresReturnCleaning: true });
+  const pairs: Array<{ assetCode: string; clientName: string; inUseNumber: string; inUseDate: string; nextNumber: string; nextDate: string }> = [];
+  for (let i = 0; i < RECORDS_PER_FLOW; i++) {
+    const unit = await apiCreateEquipmentUnit(lot.api, type.id);
+    const inUseDate = dayPlus(2 + i * 7);
+    const inUse = await apiCreateRental(lot.api, { clientId: cs[i]!.id, deliveryDate: inUseDate, unitIds: [unit.id] });
+    await apiTransitionRental(lot.api, inUse.id, 'Reserved', 'Confirmed', 'Preparing');
+    await assertOk(await inspectRentalBatch(lot.api, inUse.id, { type: 'Outbound' }), 'inspeção de saída');
+    await apiTransitionRental(lot.api, inUse.id, 'Dispatched', 'Delivered', 'InUse');
+    const nextDate = dayPlus(5 + i * 7);
+    const next = await apiCreateRental(lot.api, { clientId: cs[(i + 1) % cs.length]!.id, deliveryDate: nextDate, unitIds: [unit.id] });
+    await apiTransitionRental(lot.api, next.id, 'Reserved');
+    pairs.push({
+      assetCode: unit.assetCode,
+      clientName: cs[i]!.name,
+      inUseNumber: inUse.rentalNumber,
+      inUseDate,
+      nextNumber: next.rentalNumber,
+      nextDate,
+    });
+  }
+  return { typeName, pairs };
 }
 
 /** Três ações comunitárias (evento sem cobrança) já confirmadas. */

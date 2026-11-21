@@ -7,6 +7,7 @@ import {
   apiCreateProduct,
 } from './api-entities';
 import { apiCompleteEvent, apiStartEvent } from './api-event-flow';
+import { pngBytes } from './binary-files';
 import { enableFeatureFlagDirect } from './db-helper';
 import { fakeGoogleMaps, uniquePointNear } from './fake-providers';
 import { fakeAddress } from './test-data';
@@ -129,7 +130,19 @@ export const RENTAL_PREPARATION_KEY = 'rental.preparation';
  */
 export async function apiCreateEquipmentType(
   api: APIRequestContext,
-  opts: { name?: string; steps?: PreparationStepInput[]; requirements?: SetupRequirementInput[] } = {},
+  opts: {
+    name?: string;
+    steps?: PreparationStepInput[];
+    requirements?: SetupRequirementInput[];
+    /** Caução por unidade (devolvida, fora do total do orçamento); default 0. */
+    depositAmount?: number;
+    /** Etapa 324 — tempo de giro do tipo (0..168); omitido = padrão da empresa. */
+    turnaroundHours?: number | null;
+    /** Etapa 327 — "Higienizar na volta"; default `false`. */
+    requiresReturnCleaning?: boolean;
+    /** Etapa 330 — "Regras de uso" (até 2000), que entram no termo de entrega; omitido = sem regras. */
+    usageRules?: string | null;
+  } = {},
 ): Promise<{ id: string; name: string }> {
   const suffix = uniqueSuffix();
   const name = opts.name ?? `Pula-pula E2E ${suffix}`;
@@ -148,13 +161,16 @@ export async function apiCreateEquipmentType(
         extraHourPrice: 30,
         setupFee: 0,
         deliveryFeePerKm: 0,
-        depositAmount: 0,
+        depositAmount: opts.depositAmount ?? 0,
         lateReturnFeePerHour: 50,
         damageFeeMinimum: 200,
       },
       setupRequirements: (opts.requirements ?? []).map((r) => ({ ...r, notes: null })),
       description: 'Tipo do e2e da preparação',
       preparationSteps: (opts.steps ?? []).map((s) => ({ ...s, instructions: s.instructions ?? null })),
+      ...(opts.turnaroundHours !== undefined ? { turnaroundHours: opts.turnaroundHours } : {}),
+      ...(opts.requiresReturnCleaning ? { requiresReturnCleaning: true } : {}),
+      ...(opts.usageRules !== undefined ? { usageRules: opts.usageRules } : {}),
     },
   });
   await assertOk(res, 'POST /api/equipment-types');
@@ -190,26 +206,44 @@ export async function apiCreateEquipmentUnit(
  */
 export async function apiCreateRental(
   api: APIRequestContext,
-  input: {
-    clientId: string;
-    eventId?: string | null;
-    deliveryDate: string;
-    unitIds: string[];
-    deliveryAddress?: Record<string, unknown>;
-  },
+  input: CreateRentalInput,
 ): Promise<Rental> {
-  const res = await api.post('/api/rentals', {
+  const res = await createRental(api, input);
+  await assertOk(res, 'POST /api/rentals');
+  return readJson<Rental>(res);
+}
+
+export interface CreateRentalInput {
+  clientId: string;
+  eventId?: string | null;
+  deliveryDate: string;
+  unitIds: string[];
+  deliveryAddress?: Record<string, unknown>;
+  /**
+   * Horários da janela (Etapa 324, giro): omitidos = entrega 10:00, uso das
+   * 17:00 às 21:00 UTC e retirada às 20:00 no mesmo dia.
+   */
+  deliveryTime?: string;
+  usageStart?: string;
+  usageEnd?: string;
+  pickupDate?: string;
+  pickupTime?: string;
+}
+
+/** POST /api/rentals — devolve a resposta crua (o spec afirma o 409 do giro). */
+export function createRental(api: APIRequestContext, input: CreateRentalInput): Promise<APIResponse> {
+  return api.post('/api/rentals', {
     data: {
       clientId: input.clientId,
       eventId: input.eventId ?? null,
       budgetId: null,
       deliveryAddress: input.deliveryAddress ?? fakeAddress(),
       deliveryDate: input.deliveryDate,
-      deliveryTime: '10:00:00',
-      usageStart: `${input.deliveryDate}T17:00:00Z`,
-      usageEnd: `${input.deliveryDate}T21:00:00Z`,
-      pickupDate: input.deliveryDate,
-      pickupTime: '20:00:00',
+      deliveryTime: input.deliveryTime ?? '10:00:00',
+      usageStart: input.usageStart ?? `${input.deliveryDate}T17:00:00Z`,
+      usageEnd: input.usageEnd ?? `${input.deliveryDate}T21:00:00Z`,
+      pickupDate: input.pickupDate ?? input.deliveryDate,
+      pickupTime: input.pickupTime ?? '20:00:00',
       includeMonitor: false,
       monitorCollaboratorId: null,
       discount: 0,
@@ -217,8 +251,6 @@ export async function apiCreateRental(
       items: input.unitIds.map((equipmentUnitId) => ({ equipmentUnitId })),
     },
   });
-  await assertOk(res, 'POST /api/rentals');
-  return readJson<Rental>(res);
 }
 
 /** POST /api/rentals/{id}/transition — devolve a resposta crua (o spec afirma a recusa). */
@@ -467,16 +499,31 @@ export function swapRentalItemUnit(
   return api.post(`/api/rentals/${rentalId}/items/${rentalItemId}/swap`, { data: { newUnitId } });
 }
 
-/** POST /api/rentals/{id}/inspections/batch ("todas OK, exceto…") — devolve a resposta crua. */
-export function inspectRentalBatch(
+/**
+ * POST /api/rentals/{id}/inspections/batch ("todas OK, exceto…") — devolve a resposta crua.
+ *
+ * Etapa 328 (CB-E, §7 item 4): a volta `Damaged`/`Unusable` só é registrada com
+ * ao menos uma foto `InboundInspection` de cada item danificado enviada antes
+ * (400 `Inspection.PhotoRequired`). Na volta, o helper sobe essa foto de cada
+ * item que a inspeção marca com dano (as exceções e, com `defaultCondition`
+ * danificado, os demais itens da locação); `photos: false` não sobe, para o
+ * spec afirmar a recusa.
+ */
+export async function inspectRentalBatch(
   api: APIRequestContext,
   rentalId: string,
   input: {
     type: 'Outbound' | 'Inbound';
     defaultCondition?: 'Perfect' | 'MinorWear' | 'Damaged' | 'Unusable';
     exceptions?: Array<{ rentalItemId: string; condition: 'Perfect' | 'MinorWear' | 'Damaged' | 'Unusable'; notes?: string }>;
+    photos?: boolean;
   },
 ): Promise<APIResponse> {
+  if (input.type === 'Inbound' && input.photos !== false) {
+    for (const rentalItemId of await damagedItemIds(api, rentalId, input)) {
+      await apiUploadRentalPhoto(api, rentalId, { context: 'InboundInspection', rentalItemId });
+    }
+  }
   return api.post(`/api/rentals/${rentalId}/inspections/batch`, {
     data: {
       type: input.type,
@@ -486,6 +533,138 @@ export function inspectRentalBatch(
       exceptions: (input.exceptions ?? []).map((e) => ({ ...e, notes: e.notes ?? null })),
     },
   });
+}
+
+// ─────────────────────────── fotos (CB-E, Etapa 328) ───────────────────────────
+
+export type RentalPhotoContext = 'Preparation' | 'OutboundInspection' | 'InboundInspection' | 'Damage' | 'Setup';
+
+/** `RentalPhotoDto`. */
+export interface RentalPhoto {
+  id: string;
+  rentalId: string;
+  rentalItemId: string | null;
+  context: RentalPhotoContext;
+  targetId: string | null;
+  mimeType: string;
+  sizeBytes: number;
+  caption: string | null;
+  takenByName: string | null;
+  uploadedAt: string;
+  isLocked: boolean;
+}
+
+export interface PhotoFile {
+  name: string;
+  mimeType: string;
+  buffer: Buffer;
+}
+
+/** PNG de verdade (assinatura e dimensões), de tamanho sorteado: duas fotos nunca têm os mesmos bytes. */
+export function photoFile(): PhotoFile {
+  return {
+    name: `foto-${uniqueSuffix()}.png`,
+    mimeType: 'image/png',
+    buffer: pngBytes({ width: 24 + Math.floor(Math.random() * 64), height: 24 }),
+  };
+}
+
+/**
+ * POST multipart montado à mão: o `authApi` (e o contexto do Portal) fixam
+ * `Content-Type: application/json` nos `extraHTTPHeaders`, e o Playwright não
+ * troca um `Content-Type` que já veio de lá pelo `multipart/form-data` da opção
+ * `multipart` (`createBearerMultipartContext`). O cabeçalho da própria
+ * requisição vence o do contexto, então o corpo vai com o `boundary` daqui.
+ */
+export function postMultipart(
+  api: APIRequestContext,
+  path: string,
+  fields: Record<string, string | null | undefined>,
+  file: PhotoFile | null,
+): Promise<APIResponse> {
+  const boundary = `----e2e${uniqueSuffix()}`;
+  const parts: Buffer[] = [];
+  for (const [name, value] of Object.entries(fields)) {
+    if (value === null || value === undefined) continue;
+    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`, 'utf8'));
+  }
+  if (file) {
+    parts.push(
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="File"; filename="${file.name}"\r\nContent-Type: ${file.mimeType}\r\n\r\n`,
+        'utf8',
+      ),
+      file.buffer,
+      Buffer.from('\r\n', 'utf8'),
+    );
+  }
+  parts.push(Buffer.from(`--${boundary}--\r\n`, 'utf8'));
+  return api.post(path, {
+    headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+    data: Buffer.concat(parts),
+  });
+}
+
+/** POST /api/rentals/{id}/photos (gestor) — devolve a resposta crua. `file: null` manda sem arquivo. */
+export function uploadRentalPhoto(
+  api: APIRequestContext,
+  rentalId: string,
+  input: { context: RentalPhotoContext; rentalItemId?: string | null; targetId?: string | null; caption?: string | null; file?: PhotoFile | null },
+): Promise<APIResponse> {
+  return postMultipart(
+    api,
+    `/api/rentals/${rentalId}/photos`,
+    { Context: input.context, RentalItemId: input.rentalItemId, TargetId: input.targetId, Caption: input.caption },
+    input.file === undefined ? photoFile() : input.file,
+  );
+}
+
+export async function apiUploadRentalPhoto(
+  api: APIRequestContext,
+  rentalId: string,
+  input: { context: RentalPhotoContext; rentalItemId?: string | null; targetId?: string | null; caption?: string | null },
+): Promise<RentalPhoto> {
+  const res = await uploadRentalPhoto(api, rentalId, input);
+  await assertOk(res, `POST /api/rentals/{id}/photos (${input.context})`);
+  return readJson<RentalPhoto>(res);
+}
+
+/**
+ * Foto pelo Portal: `area` = `rental-preparations` (preparação, `Portal.PreparationWrite`)
+ * ou `rental-deliveries` (montagem no local, `Portal.RentalSetupWrite`); o alvo é o item.
+ */
+export function uploadPortalRentalPhoto(
+  portalApi: APIRequestContext,
+  area: 'rental-preparations' | 'rental-deliveries',
+  rentalId: string,
+  targetId: string,
+): Promise<APIResponse> {
+  return postMultipart(portalApi, `/api/portal/${area}/${rentalId}/photos`, { TargetId: targetId }, photoFile());
+}
+
+/** GET /api/rentals/{id}/photos — as fotos da locação (lista ou página). */
+export async function apiListRentalPhotos(api: APIRequestContext, rentalId: string): Promise<RentalPhoto[]> {
+  const res = await api.get(`/api/rentals/${rentalId}/photos`);
+  await assertOk(res, 'GET /api/rentals/{id}/photos');
+  const data = await readJson<RentalPhoto[] | { items: RentalPhoto[] }>(res);
+  return Array.isArray(data) ? data : data.items;
+}
+
+const DAMAGING: ReadonlyArray<DamageCondition> = ['Damaged', 'Unusable'];
+
+/** Os itens que a inspeção de volta marca com dano (as exceções e, com o padrão danificado, os demais). */
+async function damagedItemIds(
+  api: APIRequestContext,
+  rentalId: string,
+  input: { defaultCondition?: DamageCondition; exceptions?: Array<{ rentalItemId: string; condition: DamageCondition }> },
+): Promise<string[]> {
+  const exceptions = input.exceptions ?? [];
+  const ids = exceptions.filter((e) => DAMAGING.includes(e.condition)).map((e) => e.rentalItemId);
+  if (input.defaultCondition && DAMAGING.includes(input.defaultCondition)) {
+    const excepted = new Set(exceptions.map((e) => e.rentalItemId));
+    ids.push(...(await apiGetRental(api, rentalId)).items.map((i) => i.id).filter((id) => !excepted.has(id)));
+  }
+  return ids;
 }
 
 /** GET /api/damage-reports?rentalId= — as avarias da locação. */
@@ -805,7 +984,9 @@ export function writeOffDamageReport(
  * decisão 16) até a volta: saída inspecionada em lote, despacho, entrega, uso e
  * `Returned`; a inspeção de volta em lote marca as unidades dadas com a
  * condição pedida. Devolve as avarias da locação, que nascem dessa inspeção pelo
- * ponto único de criação (§8 item 5).
+ * ponto único de criação (§8 item 5). Desde a Etapa 328 o `inspectRentalBatch`
+ * sobe antes a foto `InboundInspection` de cada item danificado, que é também a
+ * prova que o "Cobrar do cliente" exige.
  */
 export async function returnRentalWithDamages(
   api: APIRequestContext,

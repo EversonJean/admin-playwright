@@ -370,7 +370,8 @@ test.describe('Fluxo 16 — Transporte dos brinquedos', () => {
     // §10 item 5 (decisão 19): o item de sistema recusa a marcação à mão e aponta a aba Transporte.
     const item = await rentalTransportItem(authApi, eventId);
     expect(item, 'o item "Planejar o transporte" no checklist do evento').toBeTruthy();
-    const toggle = await authApi.post(`/api/events/${eventId}/checklist/${item!.id}/toggle`);
+    // A marcação à mão é o `POST .../check` (não existe `/toggle`: dava 404).
+    const toggle = await authApi.post(`/api/events/${eventId}/checklist/${item!.id}/check`);
     expect(toggle.status()).toBe(409);
     expect(await apiErrorCodes(toggle)).toContain('EventChecklist.SystemItemReadOnly');
     expect(JSON.stringify(await toggle.json())).toContain('aba Transporte');

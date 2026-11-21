@@ -1,19 +1,53 @@
 import {
+  apiCreateEquipmentType,
+  apiCreateEquipmentUnit,
+  apiCreateRental,
+  apiCreateVehicle,
+  apiTransitionRental,
+  inspectRentalBatch,
+  putRentalLogistics,
+  scheduleRentalPreparation,
+} from '../../helpers/rental-preparation';
+import { PreparationStepInput } from '../../helpers/api-entities';
+import { createPublicApiContext } from '../../helpers/api-event-flow';
+import {
+  apiAcceptRentalTermByLink,
+  apiIssueRentalHandoverTerm,
+  apiPutRentalTermTemplate,
+  rentalTermPublicUrl,
+} from '../../helpers/rental-handover-term';
+import { assertOk } from '../../helpers/response';
+import {
   acceptedEvents,
+  acceptedEventsAt,
+  clients,
   communityEvents,
+  equipmentBudgets,
   expenses,
+  feature,
   multiDaySentBudgets,
   noteBudgets,
   noteEvents,
   paidEvents,
+  portalUsers,
   rainParties,
+  RECORDS_PER_FLOW,
+  rentalsWithReturnCleaning,
   sentBudgets,
   splitInThree,
 } from '../lib/builders';
 import { FlowSeed } from '../lib/flow';
 import { Lot } from '../lib/lot';
-import { noteActivities, noteClients, noteCollaborators, noteCompany, notePackages, notePortalUsers } from '../lib/notes';
-import { brDate, randomCnpj } from '../lib/random';
+import {
+  noteActivities,
+  noteClients,
+  noteCollaborators,
+  noteCompany,
+  notePackages,
+  notePortalUsers,
+  noteRoleUsers,
+} from '../lib/notes';
+import { brDate, dayPlus, randomCnpj } from '../lib/random';
 import { noteChecklistWithPortal } from './13-portal';
 import { noteRentals } from './15-rentals';
 
@@ -50,6 +84,229 @@ async function noteMonthExpenses(lot: Lot): Promise<void> {
   const lines = await expenses(lot, events);
   noteEvents(lot, 'com despesa', events, (_, i) => lines[i]!);
   lot.note('Despesas da empresa', '3 lançadas hoje: Transporte R$ 100,00, Lanche R$ 150,00 e Material R$ 200,00');
+}
+
+/** Passos do tipo da FC-22 (Etapa 328): o primeiro exige foto. */
+const PHOTO_PROOF_STEPS: PreparationStepInput[] = [
+  { title: 'Fotografar a lona inteira', category: 'Safety', isMandatory: true, requiresPhoto: true },
+  { title: 'Higienizar a lona', category: 'Cleaning', isMandatory: true },
+];
+
+/**
+ * Fotos como prova (FC-22, Etapa 328), três vezes:
+ * - uma locação RESERVADA de um tipo cujo passo "Fotografar a lona inteira"
+ *   exige foto, com a data da manutenção marcada para amanhã e um colaborador
+ *   com acesso ao Portal como responsável (cada locação, um colaborador);
+ * - uma locação EM USO de outro tipo, sem passo de preparação, já com a
+ *   inspeção de saída: a volta com dano é registrada no teste.
+ */
+async function notePhotoProofRentals(lot: Lot): Promise<void> {
+  await feature(lot, 'feature_equipment_rental');
+  const [cs, team] = [await clients(lot), await portalUsers(lot)];
+  const castleName = `Castelo inflável ${lot.id}`;
+  const bedName = `Cama elástica ${lot.id}`;
+  const castle = await apiCreateEquipmentType(lot.api, { name: castleName, steps: PHOTO_PROOF_STEPS });
+  const bed = await apiCreateEquipmentType(lot.api, { name: bedName });
+  lot.note('Tipo com foto exigida', `${castleName} · passo "Fotografar a lona inteira" com "Exige foto" e "Higienizar a lona"`);
+  lot.note('Tipo sem preparação', `${bedName} · para a volta com dano`);
+  for (let i = 0; i < RECORDS_PER_FLOW; i++) {
+    const responsible = team[i % team.length]!;
+    const castleUnit = await apiCreateEquipmentUnit(lot.api, castle.id);
+    const prepDate = dayPlus(10 + i * 5);
+    const prep = await apiCreateRental(lot.api, { clientId: cs[i]!.id, deliveryDate: prepDate, unitIds: [castleUnit.id] });
+    await apiTransitionRental(lot.api, prep.id, 'Reserved');
+    await assertOk(
+      await scheduleRentalPreparation(lot.api, prep.id, { date: dayPlus(1), responsibleCollaboratorId: responsible.collaboratorId }),
+      'data da preparação',
+    );
+    lot.note(
+      `Locação ${i + 1} para preparar (reservada)`,
+      `${prep.rentalNumber} · ${castleName} · patrimônio ${castleUnit.assetCode} · cliente ${cs[i]!.name} · entrega em ${brDate(prepDate)} · responsável ${responsible.name} (Portal)`,
+    );
+
+    const bedUnit = await apiCreateEquipmentUnit(lot.api, bed.id);
+    const useDate = dayPlus(2 + i * 7);
+    const inUse = await apiCreateRental(lot.api, { clientId: cs[i]!.id, deliveryDate: useDate, unitIds: [bedUnit.id] });
+    await apiTransitionRental(lot.api, inUse.id, 'Reserved', 'Confirmed', 'Preparing');
+    await assertOk(await inspectRentalBatch(lot.api, inUse.id, { type: 'Outbound' }), 'inspeção de saída');
+    await apiTransitionRental(lot.api, inUse.id, 'Dispatched', 'Delivered', 'InUse');
+    lot.note(
+      `Locação ${i + 1} para a volta com dano (em uso)`,
+      `${inUse.rentalNumber} · ${bedName} · patrimônio ${bedUnit.assetCode} · cliente ${cs[i]!.name} · entrega em ${brDate(useDate)}`,
+    );
+  }
+}
+
+/**
+ * Passos do tipo da FC-23 (Etapa 329): um "antes de sair do depósito",
+ * opcional (a preparação existe e não segura a saída), e quatro "na montagem,
+ * no local", o primeiro com foto exigida.
+ */
+const ON_SITE_SETUP_STEPS: PreparationStepInput[] = [
+  { title: 'Higienizar a lona', category: 'Cleaning', isMandatory: false },
+  { title: 'Ancorar com estacas ou sacos de areia', category: 'Safety', isMandatory: true, requiresPhoto: true, stage: 'OnSite' },
+  { title: 'Soprador em piso seco, com extensão aterrada', category: 'Safety', isMandatory: true, stage: 'OnSite' },
+  { title: 'Área livre de 2 m em volta', category: 'Safety', isMandatory: true, stage: 'OnSite' },
+  { title: 'Explicar as regras e o limite de crianças ao responsável', category: 'Safety', isMandatory: false, stage: 'OnSite' },
+];
+
+/**
+ * Montagem no local (FC-23, Etapa 329), três vezes: uma festa aceita para hoje
+ * (o Portal só mostra a entrega de ontem a amanhã) com uma locação EM
+ * PREPARAÇÃO de um castelo inflável com passos do local, já com a inspeção de
+ * saída e o transporte planejado: na entrega, um colaborador com Portal como
+ * motorista; na retirada, o colaborador da locação seguinte (que não é da
+ * entrega desta). A saída ("Em trânsito") é o primeiro passo do roteiro.
+ */
+async function noteOnSiteSetupRentals(lot: Lot): Promise<void> {
+  await feature(lot, 'feature_equipment_rental');
+  const team = await portalUsers(lot);
+  const day = dayPlus(0);
+  const events = await acceptedEventsAt(
+    lot,
+    ['09:00', '13:00', '17:00'].map((startTime, i) => ({
+      date: day,
+      startTime,
+      endTime: `${String(11 + i * 4).padStart(2, '0')}:00`,
+      fixedDate: true,
+    })),
+  );
+  const castleName = `Castelo inflável ${lot.id}`;
+  const castle = await apiCreateEquipmentType(lot.api, { name: castleName, steps: ON_SITE_SETUP_STEPS });
+  const vehicle = await apiCreateVehicle(lot.api, { name: `Fiorino ${lot.id}` });
+  lot.note(
+    'Tipo com montagem no local',
+    `${castleName} · "Antes de sair do depósito": Higienizar a lona (opcional) · "Na montagem, no local": Ancorar com estacas ou sacos de areia (obrigatório, exige foto), Soprador em piso seco, com extensão aterrada (obrigatório), Área livre de 2 m em volta (obrigatório), Explicar as regras e o limite de crianças ao responsável (opcional)`,
+  );
+  lot.note('Veículo', vehicle.name);
+  for (let i = 0; i < RECORDS_PER_FLOW; i++) {
+    const event = events[i]!;
+    const driver = team[i % team.length]!;
+    const pickup = team[(i + 1) % team.length]!;
+    const unit = await apiCreateEquipmentUnit(lot.api, castle.id);
+    const rental = await apiCreateRental(lot.api, {
+      clientId: event.clientId,
+      eventId: event.id,
+      deliveryDate: event.eventDate,
+      unitIds: [unit.id],
+    });
+    await apiTransitionRental(lot.api, rental.id, 'Reserved', 'Confirmed', 'Preparing');
+    await assertOk(await inspectRentalBatch(lot.api, rental.id, { type: 'Outbound' }), 'inspeção de saída');
+    await assertOk(
+      await putRentalLogistics(lot.api, rental.id, [
+        { kind: 'Delivery', vehicleId: vehicle.id, departureDate: event.eventDate, departureTime: '07:00:00', loadingMinutes: 30, crew: [{ collaboratorId: driver.collaboratorId, isDriver: true }] },
+        { kind: 'Pickup', vehicleId: vehicle.id, departureDate: event.eventDate, departureTime: '18:30:00', loadingMinutes: 15, crew: [{ collaboratorId: pickup.collaboratorId, isDriver: true }] },
+      ]),
+      'transporte da locação',
+    );
+    lot.note(
+      `Locação ${i + 1} para sair (em preparação)`,
+      `${rental.rentalNumber} · ${castleName} · patrimônio ${unit.assetCode} · festa de ${event.clientName} em ${brDate(event.eventDate)} · entrega às 10:00 · motorista da entrega: ${driver.name} (Portal) · retirada: ${pickup.name}`,
+    );
+  }
+}
+
+/** Modelo do termo de entrega da FC-24 (Etapa 330): só variáveis do catálogo do back. */
+const HANDOVER_TERM_TEMPLATE = {
+  title: 'Termo de entrega dos brinquedos',
+  body:
+    'Locação {locacao.numero} · uso em {festa.data}\n\n' +
+    'Eu, {cliente.nome}, recebo da {empresa.nome} os brinquedos abaixo, no endereço {entrega.endereco}:\n{itens}\n\n' +
+    'Regras de uso:\n{regras}\n\n' +
+    'Caução: {caucao}\n\n' +
+    'Respondo por dano que não seja desgaste natural e aviso a empresa de qualquer defeito assim que o perceber.',
+};
+
+const HANDOVER_TERM_USAGE_RULES =
+  'Só com monitor presente. No máximo 8 crianças por vez, de 3 a 10 anos. Sem calçados, comida ou bebida dentro do brinquedo.';
+
+/**
+ * Termo de entrega (FC-24, Etapa 330), três vezes, com o modelo do termo da
+ * empresa gravado e um castelo inflável com "Regras de uso" e caução:
+ * - uma locação CONFIRMADA com o termo gerado e aguardando o aceite (o link do
+ *   cliente vai no arquivo do lote);
+ * - uma locação CONFIRMADA com o termo já aceito pelo link, com nome e CPF;
+ * - uma locação RESERVADA, fora da janela em que o termo pode ser gerado;
+ * - uma locação EM TRÂNSITO para hoje (o Portal só mostra a entrega de ontem a
+ *   amanhã), com a inspeção de saída, um colaborador com Portal como motorista
+ *   da entrega e o termo aguardando o aceite: o "Cliente aceitar agora". A
+ *   terceira fica sem termo, para o Portal pedir o termo ao escritório.
+ */
+async function noteHandoverTermRentals(lot: Lot): Promise<void> {
+  await feature(lot, 'feature_equipment_rental');
+  const [cs, team] = [await clients(lot), await portalUsers(lot)];
+  await apiPutRentalTermTemplate(lot.api, HANDOVER_TERM_TEMPLATE);
+  lot.note('Modelo do termo', `"${HANDOVER_TERM_TEMPLATE.title}", gravado pela empresa (Equipamentos → painel → "Termo de entrega")`);
+  const castleName = `Castelo inflável ${lot.id}`;
+  const castle = await apiCreateEquipmentType(lot.api, { name: castleName, depositAmount: 300, usageRules: HANDOVER_TERM_USAGE_RULES });
+  lot.note('Tipo com regras de uso', `${castleName} · caução de R$ 300,00 · "Regras de uso": ${HANDOVER_TERM_USAGE_RULES}`);
+  // Nome diferente do veículo da FC-23: carregadas juntas, as duas caem na mesma
+  // empresa, e o nome do veículo é único (409 Vehicle.NameAlreadyExists).
+  const vehicle = await apiCreateVehicle(lot.api, { name: `Kombi ${lot.id}` });
+  lot.note('Veículo', vehicle.name);
+  const today = dayPlus(0);
+  const publicApi = await createPublicApiContext();
+  try {
+    for (let i = 0; i < RECORDS_PER_FLOW; i++) {
+      const client = cs[i]!;
+
+      const linkUnit = await apiCreateEquipmentUnit(lot.api, castle.id);
+      const linkDate = dayPlus(4 + i * 3);
+      const linkRental = await apiCreateRental(lot.api, { clientId: client.id, deliveryDate: linkDate, unitIds: [linkUnit.id] });
+      await apiTransitionRental(lot.api, linkRental.id, 'Reserved', 'Confirmed');
+      const linkTerm = await apiIssueRentalHandoverTerm(lot.api, linkRental.id);
+      lot.note(
+        `Locação ${i + 1} com o termo aguardando o aceite (confirmada)`,
+        `${linkRental.rentalNumber} · ${castleName} · patrimônio ${linkUnit.assetCode} · cliente ${client.name} · entrega em ${brDate(linkDate)} · link do cliente: ${rentalTermPublicUrl(lot.frontUrl, linkTerm.publicToken!)}`,
+      );
+
+      const acceptedUnit = await apiCreateEquipmentUnit(lot.api, castle.id);
+      const acceptedDate = dayPlus(5 + i * 3);
+      const acceptedRental = await apiCreateRental(lot.api, { clientId: client.id, deliveryDate: acceptedDate, unitIds: [acceptedUnit.id] });
+      await apiTransitionRental(lot.api, acceptedRental.id, 'Reserved', 'Confirmed');
+      const acceptedTerm = await apiIssueRentalHandoverTerm(lot.api, acceptedRental.id);
+      await apiAcceptRentalTermByLink(publicApi, acceptedTerm.publicToken!, {
+        name: client.name,
+        document: client.cpf,
+        textSha256: acceptedTerm.textSha256,
+      });
+      lot.note(
+        `Locação ${i + 1} com o termo aceito (confirmada)`,
+        `${acceptedRental.rentalNumber} · ${castleName} · patrimônio ${acceptedUnit.assetCode} · cliente ${client.name} · entrega em ${brDate(acceptedDate)} · aceito pelo link por ${client.name}, com CPF`,
+      );
+
+      const reservedUnit = await apiCreateEquipmentUnit(lot.api, castle.id);
+      const reservedDate = dayPlus(6 + i * 3);
+      const reservedRental = await apiCreateRental(lot.api, { clientId: client.id, deliveryDate: reservedDate, unitIds: [reservedUnit.id] });
+      await apiTransitionRental(lot.api, reservedRental.id, 'Reserved');
+      lot.note(
+        `Locação ${i + 1} reservada (o termo ainda não pode ser gerado)`,
+        `${reservedRental.rentalNumber} · ${castleName} · patrimônio ${reservedUnit.assetCode} · cliente ${client.name} · entrega em ${brDate(reservedDate)}`,
+      );
+
+      const driver = team[i % team.length]!;
+      const onSiteUnit = await apiCreateEquipmentUnit(lot.api, castle.id);
+      const onSiteRental = await apiCreateRental(lot.api, { clientId: client.id, deliveryDate: today, unitIds: [onSiteUnit.id] });
+      await apiTransitionRental(lot.api, onSiteRental.id, 'Reserved', 'Confirmed', 'Preparing');
+      await assertOk(await inspectRentalBatch(lot.api, onSiteRental.id, { type: 'Outbound' }), 'inspeção de saída');
+      await assertOk(
+        await putRentalLogistics(lot.api, onSiteRental.id, [
+          { kind: 'Delivery', vehicleId: vehicle.id, departureDate: today, departureTime: '07:00:00', loadingMinutes: 30, crew: [{ collaboratorId: driver.collaboratorId, isDriver: true }] },
+        ]),
+        'transporte da locação',
+      );
+      await apiTransitionRental(lot.api, onSiteRental.id, 'Dispatched');
+      // A última fica sem termo: o Portal pede "Peça ao escritório para gerar o termo".
+      const withTerm = i < RECORDS_PER_FLOW - 1;
+      if (withTerm) await apiIssueRentalHandoverTerm(lot.api, onSiteRental.id);
+      lot.note(
+        `Locação ${i + 1} para aceitar no local (em trânsito)`,
+        `${onSiteRental.rentalNumber} · ${castleName} · patrimônio ${onSiteUnit.assetCode} · cliente ${client.name} · entrega hoje (${brDate(today)}) às 10:00 · motorista da entrega: ${driver.name} (Portal) · ${withTerm ? 'termo aguardando o aceite' : 'sem termo gerado'}`,
+      );
+    }
+  } finally {
+    await publicApi.dispose();
+  }
 }
 
 export const fullFlowSeeds: FlowSeed[] = [
@@ -175,6 +432,65 @@ export const fullFlowSeeds: FlowSeed[] = [
     run: async (lot) => {
       (await communityEvents(lot)).forEach((e, i) => lot.note(`Ação comunitária ${i + 1} (confirmada)`, `evento em ${brDate(e.eventDate)}, sem cobrança`));
       await noteRentals(lot);
+    },
+  },
+  {
+    flow: 'FC-20',
+    summary: 'Locação de equipamentos ligada, 3 clientes, 3 atividades e 2 tipos de brinquedo (3 camas elásticas com caução e 1 piscina de bolinhas), e 3 orçamentos enviados com brinquedo e endereço da festa, com link público para aceitar; o terceiro pede 2 piscinas, uma a mais do que existe; e um login de cada perfil interno (Administrador, Gestor, Financeiro).',
+    run: async (lot) => {
+      await noteClients(lot);
+      await noteActivities(lot);
+      const { types, budgets } = await equipmentBudgets(lot);
+      types.forEach((t, i) => lot.note(`Tipo de brinquedo ${i + 1}`, t));
+      budgets.forEach((b, i) =>
+        lot.note(
+          `Orçamento ${i + 1} (enviado, com brinquedo)`,
+          `Cliente ${b.clientName} · festa em ${brDate(b.eventDate)} · ${b.venue} · atividade ${b.activityName} · ${b.equipment} · link do cliente: ${b.publicUrl}`,
+        ),
+      );
+      await noteRoleUsers(lot);
+    },
+  },
+  {
+    flow: 'FC-21',
+    summary: 'Locação de equipamentos ligada, 1 tipo de brinquedo com tempo de giro de 24 h e "Higienizar na volta" com 3 unidades e, para cada unidade, uma locação em uso e a próxima locação da mesma unidade reservada 3 dias depois; e um login de cada perfil interno (Administrador, Gestor, Financeiro).',
+    run: async (lot) => {
+      const { typeName, pairs } = await rentalsWithReturnCleaning(lot);
+      lot.note('Tipo de brinquedo', `${typeName} · tempo de giro de 24 h · "Higienizar na volta" marcado · 3 unidades`);
+      pairs.forEach((p, i) =>
+        lot.note(
+          `Unidade ${i + 1}: ${p.assetCode}`,
+          `${p.inUseNumber} em uso (cliente ${p.clientName}, entrega em ${brDate(p.inUseDate)}) · a próxima, ${p.nextNumber}, reservada com entrega em ${brDate(p.nextDate)}`,
+        ),
+      );
+      await noteRoleUsers(lot);
+    },
+  },
+  {
+    flow: 'FC-22',
+    summary: 'Locação de equipamentos ligada, 3 locações reservadas de um castelo inflável cujo passo "Fotografar a lona inteira" exige foto, cada uma com a data da manutenção marcada e um colaborador com acesso ao Portal como responsável, e 3 locações em uso de uma cama elástica (sem preparação), já com a inspeção de saída, para a volta com dano; e um login de cada perfil interno (Administrador, Gestor, Financeiro).',
+    run: async (lot) => {
+      await notePhotoProofRentals(lot);
+      await notePortalUsers(lot);
+      await noteRoleUsers(lot);
+    },
+  },
+  {
+    flow: 'FC-23',
+    summary: 'Locação de equipamentos ligada, um castelo inflável com um passo "Antes de sair do depósito" (opcional) e quatro "Na montagem, no local" (o primeiro, "Ancorar com estacas ou sacos de areia", exige foto), e 3 festas aceitas para o dia da carga, cada uma com uma locação em preparação desse brinquedo, já com a inspeção de saída e o transporte planejado (na entrega, um colaborador com acesso ao Portal como motorista; na retirada, outro); e um login de cada perfil interno (Administrador, Gestor, Financeiro).',
+    run: async (lot) => {
+      await noteOnSiteSetupRentals(lot);
+      await notePortalUsers(lot);
+      await noteRoleUsers(lot);
+    },
+  },
+  {
+    flow: 'FC-24',
+    summary: 'Locação de equipamentos ligada, o modelo do termo de entrega gravado pela empresa, um castelo inflável com "Regras de uso" e caução de R$ 300,00 e, três vezes: uma locação confirmada com o termo aguardando o aceite (com o link do cliente), uma confirmada com o termo já aceito pelo link, uma reservada (fora da janela do termo) e uma em trânsito para hoje, com um colaborador com acesso ao Portal como motorista da entrega e o termo aguardando o aceite (a terceira em trânsito, sem termo gerado); e um login de cada perfil interno (Administrador, Gestor, Financeiro).',
+    run: async (lot) => {
+      await noteHandoverTermRentals(lot);
+      await notePortalUsers(lot);
+      await noteRoleUsers(lot);
     },
   },
   {
