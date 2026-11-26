@@ -596,6 +596,108 @@ export function backdateEventCreatedAtDirect(eventId: string, minutes: number): 
 }
 
 /**
+ * Troca o local do evento direto no banco, sem passar pela trava do contrato
+ * assinado (a tela e o `PATCH` não mudam o local da festa com contrato
+ * formalizado). É a "festa que mudou depois da proposta" do 9.13, como a massa.
+ */
+export function setEventLocationDirect(eventId: string, location: string): void {
+  const safeId = eventId.replace(/'/g, "''");
+  execSql(`UPDATE "Events" SET "Location" = ${unicodeSqlLiteral(location)} WHERE "Id" = '${safeId}';`);
+}
+
+/**
+ * Literal de texto do Postgres so com ASCII na linha de comando (`U&'...'`, cada
+ * caractere fora do ASCII como `\XXXX` ou `\+XXXXXX`). O `psql.exe` recebe o `-c`
+ * na pagina de codigo ANSI do Windows: "Chácara" cru chega como byte invalido em
+ * UTF-8 e o UPDATE falha (a massa do 9.11 e do 9.13 caiu nisso, 2026-11-26).
+ */
+export function unicodeSqlLiteral(value: string): string {
+  let out = '';
+  for (const ch of value) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (ch === "'") out += "''";
+    else if (ch === '\\') out += '\\\\';
+    else if (code < 0x80) out += ch;
+    else if (code <= 0xffff) out += '\\' + code.toString(16).padStart(4, '0');
+    else out += '\\+' + code.toString(16).padStart(6, '0');
+  }
+  return `U&'${out}'`;
+}
+
+/**
+ * Mensagens do outbox da formalização de um aditivo (AD-D): status e quantas
+ * vezes foram tentadas. Filtra pelo id do aditivo no payload.
+ */
+export function addendumFormalizedOutboxDirect(
+  tenantId: string,
+  addendumId: string,
+): Array<{ id: string; status: string; attempts: number }> {
+  const safeTenant = tenantId.replace(/'/g, "''");
+  const safeAddendum = addendumId.replace(/'/g, "''").toLowerCase();
+  const out = execSql(`
+    SELECT "Id" || '|' || "Status" || '|' || "Attempts" FROM "OutboxMessages"
+     WHERE "TenantId" = '${safeTenant}'
+       AND "MessageType" LIKE '%ContractAddendumFormalized%'
+       AND lower("Payload") LIKE '%${safeAddendum}%'
+     ORDER BY "CreatedAt";`);
+  return out
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [id, status, attempts] = line.split('|');
+      return { id: id!, status: status!, attempts: Number(attempts) };
+    });
+}
+
+/**
+ * Reentrega a mensagem do outbox (o que um retry do publicador faria): volta
+ * para `Pending`, sem claim e sem `PublishedAt`. O consumidor deduplica por
+ * `(MessageId, ConsumerName)`, então a segunda entrega não pode aplicar de novo.
+ */
+export function redeliverOutboxMessageDirect(outboxMessageId: string): void {
+  const safeId = outboxMessageId.replace(/'/g, "''");
+  execSql(`
+    UPDATE "OutboxMessages"
+       SET "Status" = 'Pending', "PublishedAt" = NULL, "NextRetryAt" = NULL,
+           "ClaimedBy" = NULL, "ClaimedAt" = NULL
+     WHERE "Id" = '${safeId}';`);
+}
+
+/**
+ * Link de aceite do aditivo vencido sem esperar a validade (Etapa 290, A23): a
+ * validade é de até 15 dias, e só o `AddendumExpiryWorker` passa o aditivo a
+ * `Expired`. O spec põe o `ExpiresAt` no passado e pede "rodar agora".
+ */
+export function expireAddendumLinkDirect(addendumId: string): void {
+  const safeId = addendumId.replace(/'/g, "''");
+  execSql(`UPDATE "ContractAddendums" SET "ExpiresAt" = now() - interval '1 hour' WHERE "Id" = '${safeId}';`);
+}
+
+/**
+ * Documentos gravados para um aditivo (`DocumentFiles.AddendumId`, que o DTO
+ * de documento não expõe): tipo e nome original, na ordem do upload.
+ */
+export function addendumDocumentFilesDirect(addendumId: string): Array<{ documentType: string; originalFilename: string }> {
+  const safeId = addendumId.replace(/'/g, "''");
+  const out = execSql(`
+    SELECT "DocumentType" || '|' || coalesce("OriginalFilename", '') FROM "DocumentFiles"
+     WHERE "AddendumId" = '${safeId}' ORDER BY "UploadedAt";`);
+  return out
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [documentType, originalFilename] = line.split('|');
+      return { documentType: documentType!, originalFilename: originalFilename ?? '' };
+    });
+}
+
+/** Status de um envelope de assinatura digital pela chave do provedor (o `GET` do aditivo só traz o mais novo). */
+export function signatureEnvelopeStatusDirect(providerDocumentKey: string): string {
+  const safeKey = providerDocumentKey.replace(/'/g, "''");
+  return execSql(`SELECT "Status" FROM "DigitalSignatureEnvelopes" WHERE "ProviderDocumentKey" = '${safeKey}';`);
+}
+
+/**
  * Formulário pós-aceite respondido com "festa ao ar livre e descoberta". O
  * `PATCH /api/events/{id}/form-data` devolve 409 na PRIMEIRA gravação do
  * formulário (achado do e2e de 2026-10-04: o AppService faz `AddAsync` e depois
